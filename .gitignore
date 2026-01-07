@@ -1,0 +1,91 @@
+# Visual Studio 2015/2017/2019/2022 user specific files
+.vs/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+*.userprefs
+
+# Visual Studio Code
+.vscode/
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+*.code-workspace
+
+# Visual Studio cache/options directory
+.vs/
+
+# Unreal Engine generated files
+Binaries/
+DerivedDataCache/
+Intermediate/
+Saved/
+*.sln
+*.sdf
+*.opensdf
+*.db
+*.opendb
+*.VC.db
+
+# Compiled Dynamic libraries
+*.so
+*.dylib
+*.dll
+
+# Compiled Static libraries
+*.lai
+*.la
+*.a
+*.lib
+
+# Executables
+*.exe
+*.out
+*.app
+
+# Builds
+*.o
+*.obj
+
+# Precompiled Headers
+*.gch
+*.pch
+
+# Logs
+*.log
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+Desktop.ini
+
+# Rider
+.idea/
+*.iml
+
+# Unreal Engine specific
+*.tmp
+*.tmp.*
+
+# Ignore Content folder (binary assets)
+Content/
+
+# Keep source files
+!Source/**/*.cpp
+!Source/**/*.h
+!Source/**/*.cs
+
+# Keep config files
+!Config/**/*.ini
+!Config/**/*.json
+
+# Keep project files
+!*.uproject
+!*.uplugin
