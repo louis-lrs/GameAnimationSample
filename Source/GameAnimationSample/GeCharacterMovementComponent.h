@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/CharacterMovementComponent.h"
+#include "GameplayTagContainer.h"
 #include "GeCharacterMovementComponent.generated.h"
 
 // Enum to define the discrete stages of the capsule size during a jump
@@ -97,6 +98,14 @@ public:
 	
 	UPROPERTY(EditAnywhere, Category="Character Movement: DynamicCapsule", meta=(ClampMin="0.0", UIMin="0.0", EditCondition="bEnableDynamicCapsule", EditConditionHides))
 	float InterpMeshSpeed = 20.f;
+	
+	// Movement mode tags that should restore capsule (1.1) when switching from Falling
+	UPROPERTY(EditAnywhere, Category="Character Movement: DynamicCapsule", meta=(EditCondition="bEnableDynamicCapsule", EditConditionHides))
+	FGameplayTagContainer MovementModeTagsRestoreCapsule;
+	
+	// Movement mode tags that should clear data only (1.2) when switching from Falling
+	UPROPERTY(EditAnywhere, Category="Character Movement: DynamicCapsule", meta=(EditCondition="bEnableDynamicCapsule", EditConditionHides))
+	FGameplayTagContainer MovementModeTagsClearData;
 
 protected:
 	/* ------------ Runtime State ------------ */
@@ -123,10 +132,16 @@ protected:
 	// Tracks whether dynamic capsule logic is currently allowed to run.
 	bool bIsDynamicCapsuleActive = false;
 	
+	// Flag to indicate that capsule restoration should be attempted every frame
+	bool bPendingCapsuleRestore = false;
+	
+	// Expected capsule half height for detecting external modifications
+	float ExpectedCapsuleHalfHeight = 0.f;
+	
 public:
 	/* ------------ Functions ------------ */
 	
-	// Helper to get params for a specific stage
+	// Get configuration parameters for a specific stage
 	FJumpStageConfig GetStageParams(EJumpCapsuleStage Stage) const;
 	
 	// Calculates which stage we should be in based on physics state
@@ -152,6 +167,19 @@ public:
 	
 	void SetDynamicCapsuleActive(bool bActive);
 	bool IsDynamicCapsuleActive() const { return bIsDynamicCapsuleActive; }
+	
+	// Interrupt dynamic capsule adjustment with specified mode
+	// bRestoreCapsule: true = restore capsule and retry if failed, false = clear data only
+	void InterruptDynamicCapsule(bool bRestoreCapsule);
+	
+	// Get GameplayTag for the given movement mode
+	// Override this function to provide custom mapping from movement mode to GameplayTag
+	virtual FGameplayTag GetMovementModeTag(EMovementMode InMovementMode, uint8 InCustomMode) const;
+	
+	// Determine interrupt mode when movement mode changes
+	// Return true to restore capsule (1.1), false to clear data only (1.2)
+	// Uses configured FGameplayTagContainer to determine the mode
+	virtual bool ShouldRestoreCapsuleOnMovementModeChange(EMovementMode NewMovementMode, uint8 NewCustomMode) const;
 	
 	virtual float GetDefaultMeshZ() const;
 	virtual float GetDefaultCapsuleHalfHeight() const;

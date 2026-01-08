@@ -119,11 +119,15 @@ void UGeCharacterMovementComponent::OnMovementModeChanged(EMovementMode Previous
 {
 	Super::OnMovementModeChanged(PreviousMovementMode, PreviousCustomMode);
 	
-	// If is not falling movement mode, we always reset jump state
+	// If is not falling movement mode, interrupt with mode determined by target movement mode
 	if (MovementMode != MOVE_Falling)
 	{
 		bNotifyApex = false;
-		ResetDynamicCapsule();
+		if (bIsDynamicCapsuleActive)
+		{
+			const bool bRestoreCapsule = ShouldRestoreCapsuleOnMovementModeChange(MovementMode, CustomMovementMode);
+			InterruptDynamicCapsule(bRestoreCapsule);	
+		}
 	}
 }
 
@@ -160,7 +164,9 @@ void UGeCharacterMovementComponent::OnMovementUpdated(float DeltaSeconds, const 
 void UGeCharacterMovementComponent::OnReachedJumpApex()
 {	
 	ActualJumpApexTime = AccumulatedJumpTime;
-	UE_LOG_GATED(GDisplayLogCapsule, LogGeCharacterMovement, Log, this, TEXT("[DynamicCapsule] %hs ActualJumpApexTime=%.4f"), __FUNCTION__, ActualJumpApexTime);
+	UE_LOG_GATED(GDisplayLogCapsule, LogGeCharacterMovement, Log, this,
+	             TEXT("[DynamicCapsule] %hs ExpectedJumpApexTime=%.4f, ActualJumpApexTime=%.4f"), __FUNCTION__,
+	             ExpectedJumpApexTime, ActualJumpApexTime);
 }
 
 void UGeCharacterMovementComponent::OnLandedCallback(const FHitResult& Hit)
@@ -450,6 +456,9 @@ bool UGeCharacterMovementComponent::SetCapsuleStage(EJumpCapsuleStage NewCapsule
 	
 	bForceNextFloorCheck = true;
 	AdjustProxyCapsuleSize();
+	
+	// Record expected capsule half height for detecting external modifications
+	ExpectedCapsuleHalfHeight = NewHalfHeight;
 
 	// 4. Record state AFTER changes for Visual Compensation
 	const float PostActionCapsuleZ = UpdatedComponent->GetComponentLocation().Z;
@@ -527,7 +536,7 @@ bool UGeCharacterMovementComponent::SetCapsuleStage(EJumpCapsuleStage NewCapsule
 		    {
 		    	// Adjust proposed location to avoid floor collision
 			    ProposedLocation.Z = FloorHit.Location.Z - ScaledHalfHeightAdjust + MAX_FLOOR_DIST;
-		    	UE_LOG_GATED(GDisplayLogCapsule, LogGeCharacterMovement, Log, this, TEXT("[DynamicCapsule] %hs Floor Hit! Adjusted ProposedLocation=%s"), __FUNCTION__, *ProposedLocation.ToCompactString());
+		    	UE_LOG_GATED(GDisplayLogCapsule, LogGeCharacterMovement, Error, this, TEXT("[DynamicCapsule] %hs Floor Hit! Adjusted ProposedLocation=%s"), __FUNCTION__, *ProposedLocation.ToCompactString());
 		    }
 	    }
 
@@ -617,6 +626,9 @@ bool UGeCharacterMovementComponent::SetCapsuleStage(EJumpCapsuleStage NewCapsule
 	
 	bForceNextFloorCheck = true;
 	AdjustProxyCapsuleSize();
+	
+	// Record expected capsule half height for detecting external modifications
+	ExpectedCapsuleHalfHeight = NewHalfHeight;
 
 	// 4. Record state AFTER changes for Visual Compensation
 	const float PostActionCapsuleZ = UpdatedComponent->GetComponentLocation().Z;
@@ -711,17 +723,53 @@ void UGeCharacterMovementComponent::UpdateDynamicCapsule(float DeltaSeconds)
 	{
 		return;
 	}
+
+	ON_SCOPE_EXIT 
+	{ 
+		InterpMeshOffset(DeltaSeconds); 
+	};
+	
+	// Handle pending capsule restoration
+	if (bPendingCapsuleRestore)
+	{
+		const bool bRestoreResult = SetCapsuleStage(EJumpCapsuleStage::FullSize);
+		if (bRestoreResult)
+		{
+			bPendingCapsuleRestore = false;
+			UE_LOG_GATED(GDisplayLogCapsule, LogGeCharacterMovement, Log, this, TEXT("[DynamicCapsule] %hs Successfully restored capsule"), __FUNCTION__);
+		}
+		return;
+	}
 	
 	if (!bIsDynamicCapsuleActive)
 	{
 		return;
 	}
 	
+	// Check for external capsule modifications
+	if (ExpectedCapsuleHalfHeight > UE_KINDA_SMALL_NUMBER)
+	{
+		UCapsuleComponent* Capsule = CharacterOwner->GetCapsuleComponent();
+		if (Capsule != nullptr)
+		{
+			const float CurrentHalfHeight = Capsule->GetUnscaledCapsuleHalfHeight();
+			if (!FMath::IsNearlyEqual(CurrentHalfHeight, ExpectedCapsuleHalfHeight, 1.f))
+			{
+				// External modification detected, use clear-only mode
+				InterruptDynamicCapsule(false);
+				return;
+			}
+		}
+	}
+	
+	// Handle root motion: use restore mode
 	if (HasRootMotionSources())
 	{
-		ResetDynamicCapsule();
+		InterruptDynamicCapsule(true);
+		return;
 	}
-	else if (IsFalling())
+	
+	if (IsFalling())
 	{
 		AccumulatedJumpTime += DeltaSeconds;
 		SetCapsuleStage(CalculateDesiredStage());
@@ -730,8 +778,6 @@ void UGeCharacterMovementComponent::UpdateDynamicCapsule(float DeltaSeconds)
 	{
 		ResetDynamicCapsule();
 	}
-	
-	InterpMeshOffset(DeltaSeconds);
 }
 
 void UGeCharacterMovementComponent::ResetDynamicCapsule()
@@ -777,6 +823,10 @@ void UGeCharacterMovementComponent::ClearDynamicCapsuleState()
     
 	// Reset stage trackers
 	MaxReachedStage = EJumpCapsuleStage::FullSize;
+	
+	// Clear pending restore flag and expected capsule size
+	bPendingCapsuleRestore = false;
+	ExpectedCapsuleHalfHeight = 0.f;
 }
 
 void UGeCharacterMovementComponent::OnDynamicCapsuleBegin()
@@ -791,8 +841,17 @@ void UGeCharacterMovementComponent::OnDynamicCapsuleBegin()
 		return;
 	}
 	
+	UE_LOG_GATED(GDisplayLogCapsule, LogGeCharacterMovement, Warning, this, TEXT("[DynamicCapsule] %hs"), __FUNCTION__);
+	ensureMsgf(CurrentCapsuleStage == EJumpCapsuleStage::FullSize, TEXT("Unexpect CapsuleStage=%s"), *UEnum::GetValueAsString(CurrentCapsuleStage));
+	
 	SetDynamicCapsuleActive(true);
-	ensureMsgf(CurrentCapsuleStage == EJumpCapsuleStage::FullSize, TEXT("%hs Unexpect CapsuleStage=%s"), __FUNCTION__, *UEnum::GetValueAsString(CurrentCapsuleStage));
+	
+	// Initialize expected capsule half height
+	UCapsuleComponent* Capsule = CharacterOwner->GetCapsuleComponent();
+	if (Capsule != nullptr)
+	{
+		ExpectedCapsuleHalfHeight = Capsule->GetUnscaledCapsuleHalfHeight();
+	}
 
 	const float theGravityZ = GetGravityZ();
 	if (theGravityZ < 0.f)
@@ -803,7 +862,6 @@ void UGeCharacterMovementComponent::OnDynamicCapsuleBegin()
 	{
 		ExpectedJumpApexTime = 0.f;
 	}
-	UE_LOG_GATED(GDisplayLogCapsule, LogGeCharacterMovement, Warning, this, TEXT("[DynamicCapsule] %hs ExpectedJumpApexTime=%.4f"), __FUNCTION__, ExpectedJumpApexTime);
 }
 
 void UGeCharacterMovementComponent::OnDynamicCapsuleEnd()
@@ -832,6 +890,104 @@ void UGeCharacterMovementComponent::SetDynamicCapsuleActive(bool bActive)
 	UE_LOG_GATED(GDisplayLogCapsule, LogGeCharacterMovement, Log, this, TEXT("[DynamicCapsule] %hs bActive=%d"), __FUNCTION__, bActive);
 	
 	ClearDynamicCapsuleState();
+}
+
+void UGeCharacterMovementComponent::InterruptDynamicCapsule(bool bRestoreCapsule)
+{
+	if (!bIsDynamicCapsuleActive && !bPendingCapsuleRestore)
+	{
+		return;
+	}
+	
+	// Disable dynamic capsule adjustment
+	SetDynamicCapsuleActive(false);
+	
+	if (bRestoreCapsule)
+	{
+		// Attempt to restore capsule immediately
+		const bool bRestoreResult = SetCapsuleStage(EJumpCapsuleStage::FullSize);
+		if (bRestoreResult)
+		{
+			// Successfully restored, clear the pending flag
+			bPendingCapsuleRestore = false;
+			UE_LOG_GATED(GDisplayLogCapsule, LogGeCharacterMovement, Log, this, TEXT("[DynamicCapsule] %hs Interrupted and restored capsule immediately"), __FUNCTION__);
+		}
+		else
+		{
+			// Failed to restore, set flag to try every frame
+			bPendingCapsuleRestore = true;
+			UE_LOG_GATED(GDisplayLogCapsule, LogGeCharacterMovement, Warning, this, TEXT("[DynamicCapsule] %hs Interrupted but failed to restore capsule, will retry every frame"), __FUNCTION__);
+		}
+	}
+	else
+	{
+		// Clear pending restore flag
+		bPendingCapsuleRestore = false;
+		// Clear mesh offset target to stop interpolation in clear-only mode
+		TargetMeshZOffset.Reset();
+		UE_LOG_GATED(GDisplayLogCapsule, LogGeCharacterMovement, Log, this, TEXT("[DynamicCapsule] %hs Interrupted and cleared runtime data"), __FUNCTION__);
+	}
+}
+
+FGameplayTag UGeCharacterMovementComponent::GetMovementModeTag(EMovementMode InMovementMode, uint8 InCustomMode) const
+{
+	// Default implementation: convert movement mode to GameplayTag
+	// Override this function to provide custom mapping
+	
+	FString TagName;
+	
+	switch (InMovementMode)
+	{
+	case MOVE_None:
+		TagName = TEXT("MovementMode.None");
+		break;
+	case MOVE_Walking:
+		TagName = TEXT("MovementMode.Walking");
+		break;
+	case MOVE_NavWalking:
+		TagName = TEXT("MovementMode.NavWalking");
+		break;
+	case MOVE_Falling:
+		TagName = TEXT("MovementMode.Falling");
+		break;
+	case MOVE_Swimming:
+		TagName = TEXT("MovementMode.Swimming");
+		break;
+	case MOVE_Flying:
+		TagName = TEXT("MovementMode.Flying");
+		break;
+	case MOVE_Custom:
+		// For custom modes, you may want to use CustomMode value or override this function
+		TagName = FString::Printf(TEXT("MovementMode.Custom.%d"), InCustomMode);
+		break;
+	case MOVE_MAX:
+	default:
+		TagName = TEXT("MovementMode.Unknown");
+		break;
+	}
+	
+	return FGameplayTag::RequestGameplayTag(FName(*TagName), false);
+}
+
+bool UGeCharacterMovementComponent::ShouldRestoreCapsuleOnMovementModeChange(EMovementMode NewMovementMode, uint8 NewCustomMode) const
+{
+	// Get the GameplayTag for the new movement mode
+	const FGameplayTag MovementTag = GetMovementModeTag(NewMovementMode, NewCustomMode);
+	
+	// Check if the tag is in the restore capsule container (1.1)
+	if (MovementModeTagsRestoreCapsule.HasTag(MovementTag))
+	{
+		return true;
+	}
+	
+	// Check if the tag is in the clear data container (1.2)
+	if (MovementModeTagsClearData.HasTag(MovementTag))
+	{
+		return false;
+	}
+	
+	// Default behavior: restore capsule if not configured
+	return true;
 }
 
 #pragma endregion
