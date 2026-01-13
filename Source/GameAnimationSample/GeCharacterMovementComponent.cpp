@@ -668,6 +668,9 @@ bool UGeCharacterMovementComponent::SetCapsuleStage(EJumpCapsuleStage NewCapsule
 	
 		// 3. Move Capsule
 		UpdatedComponent->MoveComponent(ProposedLocation - PawnLocation, PawnRotation, false, nullptr, EMoveComponentFlags::MOVECOMP_NoFlags, ETeleportType::TeleportPhysics);
+		
+		// Force update mesh transform in case not propagated because of IsDeferringMovementUpdates
+		UpdatedComponent->UpdateChildTransforms();
 	}
 	
 	bForceNextFloorCheck = true;
