@@ -99,13 +99,10 @@ public:
 	UPROPERTY(EditAnywhere, Category="Character Movement: DynamicCapsule", meta=(ClampMin="0.0", UIMin="0.0", EditCondition="bEnableDynamicCapsule", EditConditionHides))
 	float InterpMeshSpeed = 20.f;
 	
-	// Movement mode tags that should restore capsule (1.1) when switching from Falling
-	UPROPERTY(EditAnywhere, Category="Character Movement: DynamicCapsule", meta=(EditCondition="bEnableDynamicCapsule", EditConditionHides))
-	FGameplayTagContainer MovementModeTagsRestoreCapsule;
-	
 	// Movement mode tags that should clear data only (1.2) when switching from Falling
+	// If not in this container, default behavior is to restore capsule (1.1)
 	UPROPERTY(EditAnywhere, Category="Character Movement: DynamicCapsule", meta=(EditCondition="bEnableDynamicCapsule", EditConditionHides))
-	FGameplayTagContainer MovementModeTagsClearData;
+	FGameplayTagContainer MovementModeTagsSkipRestore;
 
 protected:
 	/* ------------ Runtime State ------------ */
@@ -183,6 +180,10 @@ public:
 	
 	virtual float GetDefaultMeshZ() const;
 	virtual float GetDefaultCapsuleHalfHeight() const;
+	
+	// Debug helper function to get runtime state information
+	UFUNCTION(BlueprintCallable, Category="Character Movement: DynamicCapsule")
+	FString GetDynamicCapsuleDebugInfo() const;
 	
 	/* ------------ Replication ------------ */
 	

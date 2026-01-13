@@ -13,6 +13,7 @@
 #include "Net/UnrealNetwork.h"
 #include "Net/Core/PushModel/PushModel.h"
 
+static TAutoConsoleVariable<int32> CVarAnimSkillMovement_DebugDynamicCapsule(TEXT("a.AnimSkill.Movement.DebugDynamicCapsule"),0,TEXT("0: Disable, 1: Autonomous, 2: Client, 3: DedicatedServer, 4: Simulated Proxy, 5: All"));
 static TAutoConsoleVariable<int32> CVarAnimSkillMovement_DebugMovement(TEXT("a.AnimSkill.Movement.DebugMovement"),0,TEXT("0: Disable, 1: Autonomous, 2: Client, 3: DedicatedServer, 4: Simulated Proxy, 5: All"));
 static TAutoConsoleVariable<int32> CVarAnimSkillMovement_DebugClientID(TEXT("a.AnimSkill.Movement.DebugClientID"),-1,TEXT(""));
 static TAutoConsoleVariable<int32> CVarAnimSkillMovement_DebugStanceCollision(TEXT("a.AnimSkill.Movement.DebugStanceCollision"),0,TEXT("0: Disable, 1: Enable"));
@@ -31,6 +32,60 @@ namespace GeCharacterMovementCVars
 		TEXT("a.AnimSkill.Movement.EnableLogCapsule"),
 		GDisplayLogCapsule,
 		TEXT(""));
+}
+
+// Helper function to check if debug should be enabled based on CVAR value and role
+static bool ShouldEnableDebugForRole(int32 DebugMode, const AActor* Actor)
+{
+	if (DebugMode <= 0 || !Actor)
+	{
+		return false;
+	}
+	
+	// Check client ID filter
+	const auto ClientID = CVarAnimSkillMovement_DebugClientID.GetValueOnAnyThread();
+	if (ClientID > 0)
+	{
+		if (UE::GetPlayInEditorID() != ClientID)
+		{
+			return false;
+		}
+	}
+	
+	const UWorld* World = Actor->GetWorld();
+	if (!World)
+	{
+		return false;
+	}
+	
+	const ENetRole LocalRole = Actor->GetLocalRole();
+	const ENetMode NetMode = World->GetNetMode();
+	
+	// Filter by role based on debug mode
+	if (DebugMode == 1)
+	{
+		// Autonomous/Authority only
+		return (LocalRole == ROLE_AutonomousProxy && NetMode == NM_Client)
+			|| (LocalRole == ROLE_Authority && NetMode == NM_Standalone);
+	}
+	else if (DebugMode == 2)
+	{
+		// Client/Standalone only
+		return NetMode == NM_Client || NetMode == NM_Standalone;
+	}
+	else if (DebugMode == 3)
+	{
+		// DedicatedServer only
+		return NetMode == NM_DedicatedServer;
+	}
+	else if (DebugMode == 4)
+	{
+		// SimulatedProxy only
+		return LocalRole == ROLE_SimulatedProxy;
+	}
+	
+	// Mode 5 or any other value: enable for all
+	return true;
 }
 
 // Sets default values for this component's properties
@@ -59,43 +114,26 @@ void UGeCharacterMovementComponent::TickComponent(float DeltaTime, ELevelTick Ti
 {
 	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
 	
-	const int32 theDebugMovement = CVarAnimSkillMovement_DebugMovement.GetValueOnAnyThread();
-	if (theDebugMovement > 0)
+	if (!HasValidData())
 	{
-		const auto ClientID = CVarAnimSkillMovement_DebugClientID.GetValueOnAnyThread();
-		if (ClientID > 0)
-		{
-			if (UE::GetPlayInEditorID() != ClientID)
-			{
-				return;
-			}
-		}
-
-		bool bEnableDebug = true;
-		if (theDebugMovement == 1)
-		{
-			bEnableDebug = (CharacterOwner->GetLocalRole() == ROLE_AutonomousProxy && IsNetMode(NM_Client))
-				|| (CharacterOwner->GetLocalRole() == ROLE_Authority && IsNetMode(NM_Standalone));
-		}
-		else if (theDebugMovement == 2)
-		{
-			bEnableDebug = IsNetMode(NM_Client) || IsNetMode(NM_Standalone);
-		}
-		else if (theDebugMovement == 3)
-		{
-			bEnableDebug = IsNetMode(NM_DedicatedServer);
-		}
-		else if (theDebugMovement == 4)
-		{
-			bEnableDebug = CharacterOwner->GetLocalRole() == ROLE_SimulatedProxy;
-		}
-			
-		if (!bEnableDebug)
-		{
-			return;
-		}
-
+		return;
+	}
+	
+	// Debug movement info
+	const int32 theDebugMovement = CVarAnimSkillMovement_DebugMovement.GetValueOnAnyThread();
+	if (ShouldEnableDebugForRole(theDebugMovement, CharacterOwner))
+	{
 		DisplayDebugForGame(DeltaTime);
+	}
+	
+	// Debug dynamic capsule info
+	const int32 theDebugDynamicCapsule = CVarAnimSkillMovement_DebugDynamicCapsule.GetValueOnAnyThread();
+	if (ShouldEnableDebugForRole(theDebugDynamicCapsule, CharacterOwner))
+	{
+		const FString DebugInfo = GetDynamicCapsuleDebugInfo();
+		// Use unique key by appending suffix to avoid conflict with DisplayDebugForGame
+		const FString theObjectHash = FString::Printf(TEXT("%u_DynamicCapsule"), GetTypeHash(FObjectKey{this}));
+		UKismetSystemLibrary::PrintString(this, DebugInfo, true, false, FLinearColor::White, 0.f, FName(*theObjectHash));
 	}
 	
 	// if (CharacterOwner->GetLocalRole() == ROLE_SimulatedProxy)
@@ -218,7 +256,14 @@ float UGeCharacterMovementComponent::GetDefaultCapsuleHalfHeight() const
 
 void UGeCharacterMovementComponent::OnRep_ServerCapsuleStage()
 {
-	SetCapsuleStage(ServerCapsuleStage);
+	// Simulated proxy receives capsule stage from server
+	// Apply the stage change, which will handle mesh offset interpolation
+	if (CharacterOwner->GetLocalRole() == ROLE_SimulatedProxy)
+	{
+		SetCapsuleStage(ServerCapsuleStage);
+		UE_LOG_GATED(GDisplayLogCapsule, LogGeCharacterMovement, Log, this, TEXT("[DynamicCapsule] %hs Received ServerCapsuleStage=%s"), 
+			__FUNCTION__, *UEnum::GetValueAsString(ServerCapsuleStage));
+	}
 }
 
 FJumpStageConfig UGeCharacterMovementComponent::GetStageParams(EJumpCapsuleStage Stage) const
@@ -359,6 +404,7 @@ bool UGeCharacterMovementComponent::SetCapsuleStage(EJumpCapsuleStage NewCapsule
 		CurrentCapsuleStage = NewCapsuleStage;
 		return true;
 	}
+	UE_LOG_GATED(GDisplayLogCapsule, LogGeCharacterMovement, Log, this, TEXT("[DynamicCapsule] %hs Pending: %s"), __FUNCTION__, *UEnum::GetValueAsString(NewCapsuleStage));
 
 #if 0
 	
@@ -641,7 +687,21 @@ bool UGeCharacterMovementComponent::SetCapsuleStage(EJumpCapsuleStage NewCapsule
 	const float IdealMeshZ = DefaultMeshZ - TotalCenterShiftUp;
 
 	FVector MeshRelativeLocation = CharacterMesh->GetRelativeLocation();
-	float CompensatedMeshZ = PreActionMeshRelZ - WorldMoveDelta;
+	
+	// For simulated proxies, capsule position is controlled by server replication
+	// WorldMoveDelta should be 0 or minimal, so we directly calculate mesh offset
+	float CompensatedMeshZ;
+	if (bIsSimulatedProxy)
+	{
+		// Simulated proxy: capsule position is synced from server, no world movement
+		// Directly calculate mesh offset based on capsule size change
+		CompensatedMeshZ = PreActionMeshRelZ;
+	}
+	else
+	{
+		// Authority/Autonomous: compensate for world movement
+		CompensatedMeshZ = PreActionMeshRelZ - WorldMoveDelta;
+	}
 	
 	if (FMath::IsNearlyEqual(CompensatedMeshZ, IdealMeshZ, 0.1f))
 	{
@@ -655,8 +715,8 @@ bool UGeCharacterMovementComponent::SetCapsuleStage(EJumpCapsuleStage NewCapsule
 		CharacterMesh->SetRelativeLocation(MeshRelativeLocation);
 		TargetMeshZOffset = IdealMeshZ;
 	}
-	UE_LOG_GATED(GDisplayLogCapsule, LogGeCharacterMovement, Verbose, this, TEXT("[DynamicCapsule] %hs MeshLoc=%s"),
-		__FUNCTION__, *CharacterMesh->GetRelativeLocation().ToCompactString());
+	UE_LOG_GATED(GDisplayLogCapsule, LogGeCharacterMovement, Verbose, this, TEXT("[DynamicCapsule] %hs MeshLoc=%s, IdealMeshZ=%.2f, CompensatedMeshZ=%.2f"),
+		__FUNCTION__, *CharacterMesh->GetRelativeLocation().ToCompactString(), IdealMeshZ, CompensatedMeshZ);
 	
 #endif
 	
@@ -708,8 +768,8 @@ void UGeCharacterMovementComponent::InterpMeshOffset(float DeltaTime)
 	}
 	MeshRelativeLocation.Z = NewMeshZ;
 	CharacterMesh->SetRelativeLocation(MeshRelativeLocation);
-	UE_LOG_GATED(GDisplayLogCapsule, LogGeCharacterMovement, Verbose, this, TEXT("[DynamicCapsule] %hs MeshLoc=%s"),
-		__FUNCTION__, *CharacterMesh->GetRelativeLocation().ToCompactString());
+	UE_LOG_GATED(GDisplayLogCapsule, LogGeCharacterMovement, Verbose, this, TEXT("[DynamicCapsule] %hs MeshLoc=%s, NewMeshZ=%.2f"),
+		__FUNCTION__, *CharacterMesh->GetRelativeLocation().ToCompactString(), NewMeshZ);
 }
 
 void UGeCharacterMovementComponent::UpdateDynamicCapsule(float DeltaSeconds)
@@ -728,6 +788,15 @@ void UGeCharacterMovementComponent::UpdateDynamicCapsule(float DeltaSeconds)
 	{ 
 		InterpMeshOffset(DeltaSeconds); 
 	};
+	
+	const bool bIsSimulatedProxy = (CharacterOwner->GetLocalRole() == ROLE_SimulatedProxy);
+	
+	// Simulated proxies only handle mesh offset interpolation
+	// Capsule stage changes are handled via OnRep_ServerCapsuleStage
+	if (bIsSimulatedProxy)
+	{
+		return;
+	}
 	
 	// Handle pending capsule restoration
 	if (bPendingCapsuleRestore)
@@ -753,7 +822,7 @@ void UGeCharacterMovementComponent::UpdateDynamicCapsule(float DeltaSeconds)
 		if (Capsule != nullptr)
 		{
 			const float CurrentHalfHeight = Capsule->GetUnscaledCapsuleHalfHeight();
-			if (!FMath::IsNearlyEqual(CurrentHalfHeight, ExpectedCapsuleHalfHeight, 1.f))
+			if (!FMath::IsNearlyEqual(CurrentHalfHeight, ExpectedCapsuleHalfHeight, 0.01f))
 			{
 				// External modification detected, use clear-only mode
 				InterruptDynamicCapsule(false);
@@ -788,6 +857,12 @@ void UGeCharacterMovementComponent::ResetDynamicCapsule()
 	}
 	
 	if (!HasValidData())
+	{
+		return;
+	}
+	
+	// Only reset if active or has pending restore, otherwise already interrupted
+	if (!bIsDynamicCapsuleActive && !bPendingCapsuleRestore)
 	{
 		return;
 	}
@@ -841,8 +916,16 @@ void UGeCharacterMovementComponent::OnDynamicCapsuleBegin()
 		return;
 	}
 	
+	// Reset capsule stage to FullSize before starting new jump
+	// This ensures clean state even if previous jump was interrupted
+	if (CurrentCapsuleStage != EJumpCapsuleStage::FullSize)
+	{
+		UE_LOG_GATED(GDisplayLogCapsule, LogGeCharacterMovement, Warning, this, TEXT("[DynamicCapsule] %hs Resetting from %s to FullSize"), 
+			__FUNCTION__, *UEnum::GetValueAsString(CurrentCapsuleStage));
+		CurrentCapsuleStage = EJumpCapsuleStage::FullSize;
+	}
+	
 	UE_LOG_GATED(GDisplayLogCapsule, LogGeCharacterMovement, Warning, this, TEXT("[DynamicCapsule] %hs"), __FUNCTION__);
-	ensureMsgf(CurrentCapsuleStage == EJumpCapsuleStage::FullSize, TEXT("Unexpect CapsuleStage=%s"), *UEnum::GetValueAsString(CurrentCapsuleStage));
 	
 	SetDynamicCapsuleActive(true);
 	
@@ -929,6 +1012,106 @@ void UGeCharacterMovementComponent::InterruptDynamicCapsule(bool bRestoreCapsule
 	}
 }
 
+FString UGeCharacterMovementComponent::GetDynamicCapsuleDebugInfo() const
+{
+	// Early return if no valid data
+	if (!HasValidData())
+	{
+		return FString();
+	}
+	
+	// Pre-allocate string to avoid multiple reallocations
+	FString DebugInfo;
+	DebugInfo.Reserve(1024);
+	
+	// Get runtime environment info
+	const int32 FrameNumber = GFrameNumber % 1000;
+	const ENetRole LocalRole = CharacterOwner->GetLocalRole();
+	const ENetRole RemoteRole = CharacterOwner->GetRemoteRole();
+	const FString NetModeStr = GetNetMode() == NM_Standalone ? TEXT("Standalone") :
+	                           GetNetMode() == NM_Client ? TEXT("Client") :
+	                           GetNetMode() == NM_DedicatedServer ? TEXT("DedicatedServer") :
+	                           GetNetMode() == NM_ListenServer ? TEXT("ListenServer") : TEXT("Unknown");
+	
+	// Build debug info using Appendf for better performance
+	DebugInfo.Appendf(TEXT("=== Dynamic Capsule Debug Info ===\n"));
+	DebugInfo.Appendf(TEXT("Frame: %d | NetMode: %s | LocalRole: %s | RemoteRole: %s\n"), 
+		FrameNumber, *NetModeStr, *UEnum::GetValueAsString(LocalRole), *UEnum::GetValueAsString(RemoteRole));
+	DebugInfo.Appendf(TEXT("Enabled: %s | Active: %s | Pending Restore: %s\n"), 
+		bEnableDynamicCapsule ? TEXT("Yes") : TEXT("No"),
+		bIsDynamicCapsuleActive ? TEXT("Yes") : TEXT("No"),
+		bPendingCapsuleRestore ? TEXT("Yes") : TEXT("No"));
+	
+	DebugInfo.Appendf(TEXT("\n--- Stage Info ---\n"));
+	DebugInfo.Appendf(TEXT("Current: %s | Max Reached: %s | Server: %s\n"), 
+		*UEnum::GetValueAsString(CurrentCapsuleStage),
+		*UEnum::GetValueAsString(MaxReachedStage),
+		*UEnum::GetValueAsString(ServerCapsuleStage));
+	
+	DebugInfo.Appendf(TEXT("\n--- Timing Info ---\n"));
+	DebugInfo.Appendf(TEXT("Accumulated: %.4f | Expected Apex: %.4f | Actual Apex: %.4f\n"), 
+		AccumulatedJumpTime, ExpectedJumpApexTime, ActualJumpApexTime);
+	
+	DebugInfo.Appendf(TEXT("\n--- Capsule Info ---\n"));
+	UCapsuleComponent* Capsule = CharacterOwner->GetCapsuleComponent();
+	if (Capsule != nullptr)
+	{
+		const float CurrentHalfHeight = Capsule->GetUnscaledCapsuleHalfHeight();
+		const float DefaultHalfHeight = GetDefaultCapsuleHalfHeight();
+		const float Ratio = DefaultHalfHeight > 0.f ? (CurrentHalfHeight / DefaultHalfHeight * 100.f) : 0.f;
+		DebugInfo.Appendf(TEXT("Current: %.2f | Default: %.2f | Expected: %.2f | Ratio: %.2f%%\n"), 
+			CurrentHalfHeight, DefaultHalfHeight, ExpectedCapsuleHalfHeight, Ratio);
+	}
+	
+	DebugInfo.Appendf(TEXT("\n--- Mesh Offset Info ---\n"));
+	if (TargetMeshZOffset.IsSet())
+	{
+		const float DefaultMeshZ = GetDefaultMeshZ();
+		const float TargetZ = TargetMeshZOffset.GetValue();
+		if (CharacterOwner->GetMesh())
+		{
+			const float CurrentMeshZ = CharacterOwner->GetMesh()->GetRelativeLocation().Z;
+			DebugInfo.Appendf(TEXT("Target: %.2f | Default: %.2f | Current: %.2f | Delta: %.2f\n"), 
+				TargetZ, DefaultMeshZ, CurrentMeshZ, TargetZ - CurrentMeshZ);
+		}
+		else
+		{
+			DebugInfo.Appendf(TEXT("Target: %.2f | Default: %.2f\n"), TargetZ, DefaultMeshZ);
+		}
+	}
+	else
+	{
+		DebugInfo.Append(TEXT("No Target Mesh Offset\n"));
+	}
+	
+	DebugInfo.Appendf(TEXT("\n--- Movement Info ---\n"));
+	DebugInfo.Appendf(TEXT("Mode: %s | Custom: %d | Falling: %s | Root Motion: %s\n"), 
+		*UEnum::GetValueAsString(MovementMode),
+		CustomMovementMode,
+		IsFalling() ? TEXT("Yes") : TEXT("No"),
+		HasRootMotionSources() ? TEXT("Yes") : TEXT("No"));
+	
+	DebugInfo.Appendf(TEXT("\n--- Configuration ---\n"));
+	DebugInfo.Appendf(TEXT("Stage1: %s"), bEnableStage1 ? TEXT("Yes") : TEXT("No"));
+	if (bEnableStage1)
+	{
+		DebugInfo.Appendf(TEXT(" (T:%.2f R:%.2f O:%.2f)"), 
+			Stage1Config.Threshold, Stage1Config.ShrinkRatio, Stage1Config.CapsuleOffset);
+	}
+	DebugInfo.Append(TEXT("\n"));
+	DebugInfo.Appendf(TEXT("Stage2: %s"), bEnableStage2 ? TEXT("Yes") : TEXT("No"));
+	if (bEnableStage2)
+	{
+		DebugInfo.Appendf(TEXT(" (T:%.2f R:%.2f O:%.2f)"), 
+			Stage2Config.Threshold, Stage2Config.ShrinkRatio, Stage2Config.CapsuleOffset);
+	}
+	DebugInfo.Appendf(TEXT("\nInterp Speed: %.2f\n"), InterpMeshSpeed);
+	
+	DebugInfo.Append(TEXT("========================\n"));
+	
+	return DebugInfo;
+}
+
 FGameplayTag UGeCharacterMovementComponent::GetMovementModeTag(EMovementMode InMovementMode, uint8 InCustomMode) const
 {
 	// Default implementation: convert movement mode to GameplayTag
@@ -974,19 +1157,13 @@ bool UGeCharacterMovementComponent::ShouldRestoreCapsuleOnMovementModeChange(EMo
 	// Get the GameplayTag for the new movement mode
 	const FGameplayTag MovementTag = GetMovementModeTag(NewMovementMode, NewCustomMode);
 	
-	// Check if the tag is in the restore capsule container (1.1)
-	if (MovementModeTagsRestoreCapsule.HasTag(MovementTag))
-	{
-		return true;
-	}
-	
-	// Check if the tag is in the clear data container (1.2)
-	if (MovementModeTagsClearData.HasTag(MovementTag))
+	// If tag is in skip restore container, use clear data only mode (1.2)
+	if (MovementModeTagsSkipRestore.HasTag(MovementTag))
 	{
 		return false;
 	}
 	
-	// Default behavior: restore capsule if not configured
+	// Default behavior: restore capsule (1.1)
 	return true;
 }
 
