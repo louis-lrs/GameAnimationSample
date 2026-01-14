@@ -156,6 +156,9 @@ public:
 	float GetAccumulatedJumpTime() const { return AccumulatedJumpTime; }
 	void SetAccumulatedJumpTime(float InAccumulatedJumpTime) { AccumulatedJumpTime = InAccumulatedJumpTime; }
 	
+	float GetActualJumpApexTime() const { return ActualJumpApexTime; }
+	void SetActualJumpApexTime(float InActualJumpApexTime) { ActualJumpApexTime = InActualJumpApexTime; }
+	
 	EJumpCapsuleStage GetCurrentCapsuleStage() const { return CurrentCapsuleStage; }
 	void SetCurrentCapsuleStage(EJumpCapsuleStage InCapsuleStage) { CurrentCapsuleStage = InCapsuleStage; }
 	

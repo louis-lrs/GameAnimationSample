@@ -14,15 +14,15 @@ class FSavedMove_GeCharacter : public FSavedMove_Character
 public:
 	typedef FSavedMove_Character Super;
 
+	float SavedActualJumpApexTime;
 	float SavedAccumulatedJumpTime;
 	uint8 SavedCapsuleStage;
-	
-	// Track capsule stage at start and end of move for CanDelaySendingMove
 	uint8 StartCapsuleStage;
 	uint8 EndCapsuleStage;
 
 	FSavedMove_GeCharacter()
-		: SavedAccumulatedJumpTime(0.f)
+		: SavedActualJumpApexTime(0.f)
+		, SavedAccumulatedJumpTime(0.f)
 		, SavedCapsuleStage(0)
 		, StartCapsuleStage(0)
 		, EndCapsuleStage(0)
@@ -61,14 +61,6 @@ public:
 	{
 	}
 
-	// Get the real AccumulatedJumpTime by comparing client and server values
-	// Similar to GetServerMoveDeltaTime, this returns the actual time value to use
-	// Parameters:
-	//   ClientAccumulatedJumpTime: The AccumulatedJumpTime sent by the client (already includes this frame's DeltaTime)
-	//   ServerAccumulatedJumpTime: The locally calculated AccumulatedJumpTime on server (before this frame)
-	// Returns: The real AccumulatedJumpTime value to use for movement simulation
-	// Note: Client time already includes DeltaTime, so we subtract it to get the time before this frame
-	//       Then server will add DeltaTime later in UpdateDynamicCapsule, resulting in correct synchronization
 	float GetServerAccumulatedJumpTime(float ClientAccumulatedJumpTime, float ServerAccumulatedJumpTime) const;
 };
 
@@ -77,10 +69,12 @@ struct FGeCharacterNetworkMoveData : public FCharacterNetworkMoveData
 {
 	typedef FCharacterNetworkMoveData Super;
 	
+	float SavedActualJumpApexTime;
 	float SavedAccumulatedJumpTime;
 
 	FGeCharacterNetworkMoveData()
-		: SavedAccumulatedJumpTime(0.f)
+		: SavedActualJumpApexTime(0.f)
+		, SavedAccumulatedJumpTime(0.f)
 	{
 	}
 

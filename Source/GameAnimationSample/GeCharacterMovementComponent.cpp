@@ -277,23 +277,28 @@ void UGeCharacterMovementComponent::ServerMove_PerformMovement(const FCharacterN
 			return;
 		}
 
-		// ========== 自定义逻辑: 应用客户端的 AccumulatedJumpTime ==========
 		if (const FGeCharacterNetworkMoveData* GeMoveData = static_cast<const FGeCharacterNetworkMoveData*>(&MoveData))
 		{
-			// Get server prediction data to calculate real AccumulatedJumpTime
+			if (GeMoveData->SavedActualJumpApexTime > UE_KINDA_SMALL_NUMBER)
+			{
+				if (ActualJumpApexTime <= UE_KINDA_SMALL_NUMBER || 
+				    FMath::Abs(ActualJumpApexTime - GeMoveData->SavedActualJumpApexTime) > UE_KINDA_SMALL_NUMBER)
+				{
+					SetActualJumpApexTime(GeMoveData->SavedActualJumpApexTime);
+					UE_LOG_GATED(GDisplayLogCapsule, LogGeCharacterMovement, Error, this,
+					             TEXT("[DynamicCapsule] ServerMove: Applied client ActualJumpApexTime=%.4f"), 
+					             ActualJumpApexTime);
+				}
+			}
+			
 			if (FNetworkPredictionData_Server_GeCharacter* GeServerData = static_cast<FNetworkPredictionData_Server_GeCharacter*>(GetPredictionData_Server()))
 			{
-				// Get the real AccumulatedJumpTime by comparing client and server values
-				// Client's time already includes this frame's DeltaTime, so we subtract it
 				const float RealAccumulatedJumpTime = GeServerData->GetServerAccumulatedJumpTime(
 					GeMoveData->SavedAccumulatedJumpTime, 
 					AccumulatedJumpTime);
-
-				// Apply the real AccumulatedJumpTime to match client state
 				SetAccumulatedJumpTime(RealAccumulatedJumpTime);
 			}
 		}
-		// ========== 自定义逻辑结束 ==========
 
 		// Perform actual movement
 		if ((MyWorld->GetWorldSettings()->GetPauserPlayerState() == nullptr))
@@ -1013,7 +1018,6 @@ void UGeCharacterMovementComponent::UpdateDynamicCapsule(float DeltaSeconds)
 	
 	if (IsFalling())
 	{
-		UE_LOG_ENHANCED(LogTemp, Log, this, TEXT("Admin %hs AccumulatedJumpTime=%.6f, DeltaSeconds=%.6f"), __FUNCTION__, AccumulatedJumpTime, DeltaSeconds);
 		AccumulatedJumpTime += DeltaSeconds;
 		SetCapsuleStage(CalculateDesiredStage());
 	}
