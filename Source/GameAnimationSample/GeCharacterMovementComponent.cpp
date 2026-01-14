@@ -155,11 +155,15 @@ void UGeCharacterMovementComponent::GetLifetimeReplicatedProps(TArray<FLifetimeP
 {
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
 	
-	// Define replicated shared params
-	// FDoRepLifetimeParams SharedParamsSimulatedOnly{ COND_SimulatedOnly, REPNOTIFY_OnChanged, true };
-	// DOREPLIFETIME_WITH_PARAMS_FAST(UGeCharacterMovementComponent, ServerCapsuleStage, SharedParamsSimulatedOnly);
-	
-	DOREPLIFETIME_CONDITION(UGeCharacterMovementComponent, ServerCapsuleStage, COND_SkipOwner);
+	// ServerCapsuleStage replication settings:
+	// - COND_SkipOwner: Don't replicate to owning client (they predict it)
+	// - REPNOTIFY_OnChanged: Trigger OnRep only when value actually changes
+	// - bIsPushBased = true: Support PushModel for efficient replication
+	FDoRepLifetimeParams CapsuleStageParams;
+	CapsuleStageParams.Condition = COND_SkipOwner;
+	CapsuleStageParams.RepNotifyCondition = REPNOTIFY_OnChanged;
+	CapsuleStageParams.bIsPushBased = true;
+	DOREPLIFETIME_WITH_PARAMS_FAST(UGeCharacterMovementComponent, ServerCapsuleStage, CapsuleStageParams);
 }
 
 FNetworkPredictionData_Client* UGeCharacterMovementComponent::GetPredictionData_Client() const
@@ -431,9 +435,9 @@ void UGeCharacterMovementComponent::OnRep_ServerCapsuleStage()
 	// Apply the stage change, which will handle mesh offset interpolation
 	if (CharacterOwner->GetLocalRole() == ROLE_SimulatedProxy)
 	{
-		SetCapsuleStage(ServerCapsuleStage);
 		UE_LOG_GATED(GDisplayLogCapsule, LogGeCharacterMovement, Log, this, TEXT("[DynamicCapsule] %hs Received ServerCapsuleStage=%s"), 
 			__FUNCTION__, *UEnum::GetValueAsString(ServerCapsuleStage));
+		SetCapsuleStage(ServerCapsuleStage);
 	}
 }
 
@@ -576,135 +580,6 @@ bool UGeCharacterMovementComponent::SetCapsuleStage(EJumpCapsuleStage NewCapsule
 		return true;
 	}
 	UE_LOG_GATED(GDisplayLogCapsule, LogGeCharacterMovement, Log, this, TEXT("[DynamicCapsule] %hs Pending: %s"), __FUNCTION__, *UEnum::GetValueAsString(NewCapsuleStage));
-
-#if 0
-	
-	/* ------------------------ Physics Probe ------------------------ */
-	const bool bIsMovingDown = TotalZDelta < 0.f; 
-	const float ScaledTotalZDelta = TotalZDelta * ComponentScale;
-	const float ScaledHalfHeightAdjust = HalfHeightAdjust * ComponentScale;
-	
-	const FVector PawnLocation = UpdatedComponent->GetComponentLocation();
-	const FQuat PawnRotation = UpdatedComponent->GetComponentQuat();
-	FVector ProposedLocation = PawnLocation + FVector(0.f, 0.f, ScaledTotalZDelta);
-	
-	const bool bIsSimulatedProxy = (CharacterOwner->GetLocalRole() == ROLE_SimulatedProxy);
-	if (!bIsSimulatedProxy && bIsMovingDown)
-	{
-		// Compensate for the difference between current capsule size and target capsule size
-		constexpr float SweepInflation = UE_KINDA_SMALL_NUMBER * 10.f;
-		const float AbsMoveDownAmount = -ScaledTotalZDelta;
-		
-		// Use current capsule for sweeping downwards
-		const ECollisionChannel CollisionChannel = UpdatedComponent->GetCollisionObjectType();
-		const FCollisionShape CurrentCapsuleShape = Capsule->GetCollisionShape();
-		FCollisionQueryParams CapsuleParams(SCENE_QUERY_STAT(DynamicCapsuleTrace), false, CharacterOwner);
-		FCollisionResponseParams ResponseParam;
-		InitCollisionParams(CapsuleParams, ResponseParam);
-		
-		FHitResult FloorHit;
-		FVector Start = PawnLocation - FVector(0.f, 0.f, AbsMoveDownAmount);
-		FVector End = Start - FVector(0.f, 0.f, AbsMoveDownAmount + SweepInflation);
-		const bool bHitFloor = MyWorld->SweepSingleByChannel(FloorHit, Start, End, FQuat::Identity, CollisionChannel, CurrentCapsuleShape, CapsuleParams, ResponseParam);
-#if ENABLE_DRAW_DEBUG
-		if (CVarAnimSkillMovement_DebugStanceCollision.GetValueOnAnyThread() > 0)
-		{
-			DrawDebugCapsuleTraceSingle(MyWorld, Start, End, CurrentCapsuleShape.GetCapsuleRadius(), CurrentCapsuleShape.GetCapsuleHalfHeight(), 
-				EDrawDebugTrace::Type::ForDuration, bHitFloor, FloorHit,FLinearColor::Green, FLinearColor::Red, 3.f);
-		}
-#endif
-		if (bHitFloor)
-		{
-			ProposedLocation.Z = FloorHit.Location.Z + AbsMoveDownAmount + MAX_FLOOR_DIST;
-			UE_LOG_GATED(GDisplayLogCapsule, LogGeCharacterMovement, Log, this, TEXT("[DynamicCapsule] %hs Adjusted ProposedLocation=%s"), __FUNCTION__, *ProposedLocation.ToCompactString());
-		}
-		
-		// Use target capsule for proposed location blocking test
-		const FCollisionShape TargetCapsuleShape = GetPawnCapsuleCollisionShape(SHRINK_HeightCustom, -SweepInflation + ScaledHalfHeightAdjust); // Shrink by negative amount, so actually grow it.
-		const bool bEncroached = MyWorld->OverlapBlockingTestByChannel(ProposedLocation, PawnRotation, CollisionChannel, TargetCapsuleShape, CapsuleParams, ResponseParam);
-#if ENABLE_DRAW_DEBUG
-		if (CVarAnimSkillMovement_DebugStanceCollision.GetValueOnAnyThread() > 0)
-		{
-			const FTransform ActorTransform = GetActorTransform();
-			const FVector LocalOffset = ActorTransform.TransformVectorNoScale(FVector(0, 50, 0));
-			const FVector FinalLocation = ProposedLocation + LocalOffset;
-			FHitResult theHitResult;
-			theHitResult.bBlockingHit = bEncroached;
-			theHitResult.Location = FinalLocation;
-			DrawDebugCapsuleTraceSingle(MyWorld, FinalLocation, FinalLocation, TargetCapsuleShape.GetCapsuleRadius(), TargetCapsuleShape.GetCapsuleHalfHeight()
-				 , EDrawDebugTrace::ForDuration, bEncroached, theHitResult, FLinearColor::Blue, FLinearColor::Red, 3.f);
-		}
-#endif
-		if (bEncroached)
-		{
-			UE_LOG_GATED(GDisplayLogCapsule, LogGeCharacterMovement, Warning, this, TEXT("[DynamicCapsule] %hs Failed: Encroached at ProposedLocation=%s"), __FUNCTION__, *ProposedLocation.ToCompactString());
-			return false;
-		}
-	}
-
-	/* ------------------------ Commit Changes ------------------------ */
-	CurrentCapsuleStage = NewCapsuleStage;
-	if (CharacterOwner->HasAuthority())
-	{
-		ServerCapsuleStage = NewCapsuleStage;
-		// If Push Model is enabled, simple assignment won't trigger replication!
-		// MARK_PROPERTY_DIRTY_FROM_NAME(UGeCharacterMovementComponent, ServerCapsuleStage, this);
-	}
-	UE_LOG_GATED(GDisplayLogCapsule, LogGeCharacterMovement, Log, this, TEXT("[DynamicCapsule] %hs Succeed: %s"), __FUNCTION__, *UEnum::GetValueAsString(NewCapsuleStage));
-
-	// 1. Record state BEFORE changes for Visual Compensation
-	const float PreActionCapsuleZ = UpdatedComponent->GetComponentLocation().Z;
-	const float PreActionMeshRelZ = CharacterMesh->GetRelativeLocation().Z;
-	
-	if (bIsSimulatedProxy)
-	{
-		// 2.1 Apply Size Change
-		Capsule->SetCapsuleHalfHeight(NewHalfHeight, true);
-		bShrinkProxyCapsule = true;
-	}
-	else if (!bIsSimulatedProxy)
-	{
-		// 2.2 Apply Size Change
-		Capsule->SetCapsuleHalfHeight(NewHalfHeight, true);
-	
-		// 3. Move Capsule
-		UpdatedComponent->MoveComponent(ProposedLocation - PawnLocation, PawnRotation, false, nullptr, EMoveComponentFlags::MOVECOMP_NoFlags, ETeleportType::TeleportPhysics);
-	}
-	
-	bForceNextFloorCheck = true;
-	AdjustProxyCapsuleSize();
-	
-	// Record expected capsule half height for detecting external modifications
-	ExpectedCapsuleHalfHeight = NewHalfHeight;
-
-	// 4. Record state AFTER changes for Visual Compensation
-	const float PostActionCapsuleZ = UpdatedComponent->GetComponentLocation().Z;
-	const float WorldMoveDelta = PostActionCapsuleZ - PreActionCapsuleZ;
-	
-	// 5. Visual Compensation
-	const float DefaultMeshZ = GetDefaultMeshZ();
-	const float TotalShrinkAmount = DefaultHalfHeight - NewHalfHeight;
-	const float TotalCenterShiftUp = TotalShrinkAmount + TargetOffset;
-	const float IdealMeshZ = DefaultMeshZ - TotalCenterShiftUp;
-
-	FVector MeshRelativeLocation = CharacterMesh->GetRelativeLocation();
-	float CompensatedMeshZ = PreActionMeshRelZ - WorldMoveDelta;
-	
-	if (FMath::IsNearlyEqual(CompensatedMeshZ, IdealMeshZ, 0.1f))
-	{
-		MeshRelativeLocation.Z = IdealMeshZ;
-		CharacterMesh->SetRelativeLocation(MeshRelativeLocation);
-		TargetMeshZOffset.Reset();
-	}
-	else
-	{
-		MeshRelativeLocation.Z = CompensatedMeshZ;
-		CharacterMesh->SetRelativeLocation(MeshRelativeLocation);
-		TargetMeshZOffset = IdealMeshZ;
-	}
-	UE_LOG_GATED(GDisplayLogCapsule, LogGeCharacterMovement, Log, this, TEXT("[DynamicCapsule] %hs MeshLoc=%s"), __FUNCTION__, *CharacterMesh->GetRelativeLocation().ToCompactString());
-	
-#else
 
 	/* ------------------------ Physics Probe ------------------------ */
 	const float ScaledTotalZDelta = TotalZDelta * ComponentScale;
@@ -896,8 +771,6 @@ bool UGeCharacterMovementComponent::SetCapsuleStage(EJumpCapsuleStage NewCapsule
 	UE_LOG_GATED(GDisplayLogCapsule, LogGeCharacterMovement, Verbose, this, TEXT("[DynamicCapsule] %hs MeshLoc=%s, IdealMeshZ=%.2f, CompensatedMeshZ=%.2f"),
 		__FUNCTION__, *CharacterMesh->GetRelativeLocation().ToCompactString(), IdealMeshZ, CompensatedMeshZ);
 	
-#endif
-	
 	if (FNetworkPredictionData_Client_Character* ClientData = GetPredictionData_Client_Character())
 	{
 		// Don't smooth this change in mesh position
@@ -1054,11 +927,7 @@ void UGeCharacterMovementComponent::ResetDynamicCapsule()
 	
 	if (!bResetResult && CharacterOwner->IsLocallyControlled() && IsMovingOnGround())
 	{
-		const bool bIsCrouching = IsCrouching();
-		if (!bIsCrouching && CanCrouchInCurrentState())
-		{
-			Crouch(false);
-		}
+		CharacterOwner->Crouch(false);
 		// UAbilitySystemBlueprintLibrary::SendGameplayEventToActor(CharacterOwner.Get(), GetDefault<US1GameTagSettings>()->InputCrouchTag, FGameplayEventData());	
 	}
 	
