@@ -2,12 +2,18 @@
 
 
 #include "GeCharacterMovementComponent.h"
+#include "GeCharacterMovementReplication.h"
 
 #include "EnhancedLog.h"
 #include "GameAnimationSample.h"
 #include "KismetTraceUtils.h"
 #include "Components/CapsuleComponent.h"
+#include "Components/SkeletalMeshComponent.h"
+#include "Engine/ScopedMovementUpdate.h"
+#include "EngineLogs.h"
 #include "GameFramework/Character.h"
+#include "GameFramework/PlayerController.h"
+#include "GameFramework/WorldSettings.h"
 #include "Kismet/GameplayStatics.h"
 #include "Kismet/KismetMathLibrary.h"
 #include "Net/UnrealNetwork.h"
@@ -94,6 +100,9 @@ UGeCharacterMovementComponent::UGeCharacterMovementComponent()
 	// Set this component to be initialized when the game starts, and to be ticked every frame.  You can turn these features
 	// off to improve performance if you don't need them.
 	PrimaryComponentTick.bCanEverTick = true;
+	
+	// Set custom network move data container for syncing AccumulatedJumpTime
+	SetNetworkMoveDataContainer(GeNetworkMoveDataContainer);
 }
 
 // Called when the game starts
@@ -151,6 +160,163 @@ void UGeCharacterMovementComponent::GetLifetimeReplicatedProps(TArray<FLifetimeP
 	// DOREPLIFETIME_WITH_PARAMS_FAST(UGeCharacterMovementComponent, ServerCapsuleStage, SharedParamsSimulatedOnly);
 	
 	DOREPLIFETIME_CONDITION(UGeCharacterMovementComponent, ServerCapsuleStage, COND_SkipOwner);
+}
+
+FNetworkPredictionData_Client* UGeCharacterMovementComponent::GetPredictionData_Client() const
+{
+	if (ClientPredictionData == nullptr)
+	{
+		UGeCharacterMovementComponent* MutableThis = const_cast<UGeCharacterMovementComponent*>(this);
+		MutableThis->ClientPredictionData = new FNetworkPredictionData_Client_GeCharacter(*this);
+	}
+	
+	return ClientPredictionData;
+}
+
+FNetworkPredictionData_Server* UGeCharacterMovementComponent::GetPredictionData_Server() const
+{
+	if (ServerPredictionData == nullptr)
+	{
+		UGeCharacterMovementComponent* MutableThis = const_cast<UGeCharacterMovementComponent*>(this);
+		MutableThis->ServerPredictionData = new FNetworkPredictionData_Server_GeCharacter(*this);
+	}
+	
+	return ServerPredictionData;
+}
+
+bool UGeCharacterMovementComponent::CanDelaySendingMove(const FSavedMovePtr& NewMovePtr)
+{
+	// Call parent implementation first
+	if (!Super::CanDelaySendingMove(NewMovePtr))
+	{
+		return false;
+	}
+	
+	// Don't delay moves that change capsule stage over the course of the move
+	if (const FSavedMove_GeCharacter* GeNewMove = static_cast<const FSavedMove_GeCharacter*>(NewMovePtr.Get()))
+	{
+		if (GeNewMove->StartCapsuleStage != GeNewMove->EndCapsuleStage)
+		{
+			return false;
+		}
+	}
+	
+	return true;
+}
+
+void UGeCharacterMovementComponent::ServerMove_PerformMovement(const FCharacterNetworkMoveData& MoveData)
+{
+	if (!HasValidData() || !IsActive())
+	{
+		return;
+	}
+
+	const float ClientTimeStamp = MoveData.TimeStamp;
+
+	FVector ClientAccel = MoveData.Acceleration;
+
+	// Convert the move's acceleration to worldspace if necessary
+	if (MovementBaseUtility::IsDynamicBase(MoveData.MovementBase))
+	{
+		MovementBaseUtility::TransformDirectionToWorld(MoveData.MovementBase, MoveData.MovementBaseBoneName, MoveData.Acceleration, ClientAccel);
+	}
+
+	const uint8 ClientMoveFlags = MoveData.CompressedMoveFlags;
+	const FRotator ClientControlRotation = MoveData.ControlRotation;
+
+	FNetworkPredictionData_Server_Character* ServerData = GetPredictionData_Server_Character();
+	check(ServerData);
+
+	if (!VerifyClientTimeStamp(ClientTimeStamp, *ServerData))
+	{
+		const float ServerTimeStamp = ServerData->CurrentClientTimeStamp;
+		// This is more severe if the timestamp has a large discrepancy and hasn't been recently reset.
+		static constexpr float NetServerMoveTimestampExpiredWarningThreshold = 1.0f;
+		if (ServerTimeStamp > 1.0f && FMath::Abs(ServerTimeStamp - ClientTimeStamp) > NetServerMoveTimestampExpiredWarningThreshold)
+		{
+			UE_LOG(LogNetPlayerMovement, Warning, TEXT("ServerMove: TimeStamp expired: %f, CurrentTimeStamp: %f, Character: %s"), ClientTimeStamp, ServerTimeStamp, *GetNameSafe(CharacterOwner));
+		}
+		else
+		{
+			UE_LOG(LogNetPlayerMovement, Log, TEXT("ServerMove: TimeStamp expired: %f, CurrentTimeStamp: %f, Character: %s"), ClientTimeStamp, ServerTimeStamp, *GetNameSafe(CharacterOwner));
+		}
+		return;
+	}
+
+	bool bServerReadyForClient = true;
+	APlayerController* PC = Cast<APlayerController>(CharacterOwner->GetController());
+	if (PC)
+	{
+		bServerReadyForClient = PC->NotifyServerReceivedClientData(CharacterOwner, ClientTimeStamp);
+		if (!bServerReadyForClient)
+		{
+			ClientAccel = FVector::ZeroVector;
+		}
+	}
+
+	const UWorld* MyWorld = GetWorld();
+	const float DeltaTime = ServerData->GetServerMoveDeltaTime(ClientTimeStamp, CharacterOwner->GetActorTimeDilation(*MyWorld));
+
+	// Defer all mesh child updates until all movement completes.
+	FScopedMovementUpdate ScopedMeshUpdate(CharacterOwner->GetMesh(), EScopedUpdate::DeferredUpdates);
+
+	if (DeltaTime > 0.f)
+	{
+		ServerData->CurrentClientTimeStamp = ClientTimeStamp;
+		ServerData->ServerAccumulatedClientTimeStamp += DeltaTime;
+		ServerData->ServerTimeStamp = MyWorld->GetTimeSeconds();
+		ServerData->ServerTimeStampLastServerMove = ServerData->ServerTimeStamp;
+
+		if (AController* CharacterController = Cast<AController>(CharacterOwner->GetController()))
+		{
+			CharacterController->SetControlRotation(ClientControlRotation);
+		}
+
+		if (!bServerReadyForClient)
+		{
+			return;
+		}
+
+		// ========== 自定义逻辑: 应用客户端的 AccumulatedJumpTime ==========
+		if (const FGeCharacterNetworkMoveData* GeMoveData = static_cast<const FGeCharacterNetworkMoveData*>(&MoveData))
+		{
+			// Get server prediction data to calculate real AccumulatedJumpTime
+			if (FNetworkPredictionData_Server_GeCharacter* GeServerData = static_cast<FNetworkPredictionData_Server_GeCharacter*>(GetPredictionData_Server()))
+			{
+				// Get the real AccumulatedJumpTime by comparing client and server values
+				// Client's time already includes this frame's DeltaTime, so we subtract it
+				const float RealAccumulatedJumpTime = GeServerData->GetServerAccumulatedJumpTime(
+					GeMoveData->SavedAccumulatedJumpTime, 
+					AccumulatedJumpTime);
+
+				// Apply the real AccumulatedJumpTime to match client state
+				SetAccumulatedJumpTime(RealAccumulatedJumpTime);
+			}
+		}
+		// ========== 自定义逻辑结束 ==========
+
+		// Perform actual movement
+		if ((MyWorld->GetWorldSettings()->GetPauserPlayerState() == nullptr))
+		{
+			FScopedMovementUpdate ScopedCapsuleUpdate(bEnableScopedMovementUpdates ? UpdatedComponent : nullptr, EScopedUpdate::DeferredUpdates);
+			if (PC)
+			{
+				PC->UpdateRotation(DeltaTime);
+			}
+
+			MoveAutonomous(ClientTimeStamp, DeltaTime, ClientMoveFlags, ClientAccel);
+		}
+
+		UE_CLOG(CharacterOwner && UpdatedComponent, LogNetPlayerMovement, VeryVerbose, TEXT("ServerMove Time %f Acceleration %s Velocity %s Position %s Rotation %s DeltaTime %f Mode %s MovementBase %s.%s (Dynamic:%d)"),
+			ClientTimeStamp, *ClientAccel.ToString(), *Velocity.ToString(), *UpdatedComponent->GetComponentLocation().ToString(), *UpdatedComponent->GetComponentRotation().ToCompactString(), DeltaTime, *GetMovementName(),
+			*GetNameSafe(GetMovementBase()), *CharacterOwner->GetBasedMovement().BoneName.ToString(), MovementBaseUtility::IsDynamicBase(GetMovementBase()) ? 1 : 0);
+	}
+
+	// Validate move only after old and first dual portion, after all moves are completed.
+	if (MoveData.NetworkMoveType == FCharacterNetworkMoveData::ENetworkMoveType::NewMove)
+	{
+		ServerMoveHandleClientError(ClientTimeStamp, DeltaTime, ClientAccel, MoveData.Location, MoveData.MovementBase, MoveData.MovementBaseBoneName, MoveData.MovementMode);
+	}
 }
 
 void UGeCharacterMovementComponent::OnMovementModeChanged(EMovementMode PreviousMovementMode, uint8 PreviousCustomMode)
@@ -646,8 +812,12 @@ bool UGeCharacterMovementComponent::SetCapsuleStage(EJumpCapsuleStage NewCapsule
 	if (CharacterOwner->HasAuthority())
 	{
 		ServerCapsuleStage = NewCapsuleStage;
-		// If Push Model is enabled, simple assignment won't trigger replication!
-		// MARK_PROPERTY_DIRTY_FROM_NAME(UGeCharacterMovementComponent, ServerCapsuleStage, this);
+		
+		// Support PushModel: Mark property dirty to trigger replication
+		MARK_PROPERTY_DIRTY_FROM_NAME(UGeCharacterMovementComponent, ServerCapsuleStage, this);
+		
+		// Force network update to prevent replication delay causing visual desync
+		CharacterOwner->ForceNetUpdate();
 	}
 	UE_LOG_GATED(GDisplayLogCapsule, LogGeCharacterMovement, Log, this, TEXT("[DynamicCapsule] %hs Succeed: %s"), __FUNCTION__, *UEnum::GetValueAsString(NewCapsuleStage));
 
@@ -843,6 +1013,7 @@ void UGeCharacterMovementComponent::UpdateDynamicCapsule(float DeltaSeconds)
 	
 	if (IsFalling())
 	{
+		UE_LOG_ENHANCED(LogTemp, Log, this, TEXT("Admin %hs AccumulatedJumpTime=%.6f, DeltaSeconds=%.6f"), __FUNCTION__, AccumulatedJumpTime, DeltaSeconds);
 		AccumulatedJumpTime += DeltaSeconds;
 		SetCapsuleStage(CalculateDesiredStage());
 	}

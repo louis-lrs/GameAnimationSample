@@ -5,6 +5,7 @@
 #include "CoreMinimal.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameplayTagContainer.h"
+#include "GeCharacterMovementReplication.h"
 #include "GeCharacterMovementComponent.generated.h"
 
 // Enum to define the discrete stages of the capsule size during a jump
@@ -57,6 +58,16 @@ public:
 	
 	// Override to setup replication rules
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
+	
+	// Override to use custom prediction data
+	virtual FNetworkPredictionData_Client* GetPredictionData_Client() const override;
+	virtual FNetworkPredictionData_Server* GetPredictionData_Server() const override;
+	
+	// Override to apply client's AccumulatedJumpTime on server
+	virtual void ServerMove_PerformMovement(const FCharacterNetworkMoveData& MoveData) override;
+	
+	// Override to prevent delaying moves when CapsuleStage changes
+	virtual bool CanDelaySendingMove(const FSavedMovePtr& NewMovePtr) override;
 	
 	virtual void OnMovementModeChanged(EMovementMode PreviousMovementMode, uint8 PreviousCustomMode) override;
 	virtual void AdjustFloorHeight() override;
@@ -135,8 +146,18 @@ protected:
 	// Expected capsule half height for detecting external modifications
 	float ExpectedCapsuleHalfHeight = 0.f;
 	
+	// Custom network move data container for syncing AccumulatedJumpTime
+	FGeCharacterNetworkMoveDataContainer GeNetworkMoveDataContainer;
+	
 public:
 	/* ------------ Functions ------------ */
+	
+	// Get/Set methods for network replication
+	float GetAccumulatedJumpTime() const { return AccumulatedJumpTime; }
+	void SetAccumulatedJumpTime(float InAccumulatedJumpTime) { AccumulatedJumpTime = InAccumulatedJumpTime; }
+	
+	EJumpCapsuleStage GetCurrentCapsuleStage() const { return CurrentCapsuleStage; }
+	void SetCurrentCapsuleStage(EJumpCapsuleStage InCapsuleStage) { CurrentCapsuleStage = InCapsuleStage; }
 	
 	// Get configuration parameters for a specific stage
 	FJumpStageConfig GetStageParams(EJumpCapsuleStage Stage) const;
