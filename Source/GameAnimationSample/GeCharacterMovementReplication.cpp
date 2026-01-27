@@ -8,8 +8,8 @@
 void FSavedMove_GeCharacter::Clear()
 {
 	Super::Clear();
-	SavedActualJumpApexTime = 0.f;
-	SavedAccumulatedJumpTime = 0.f;
+	SavedActualJumpApexTime = 0.0f;
+	SavedAccumulatedJumpTime = 0.0f;
 	SavedCapsuleStage = 0;
 	StartCapsuleStage = 0;
 	EndCapsuleStage = 0;
@@ -21,6 +21,7 @@ void FSavedMove_GeCharacter::SetMoveFor(ACharacter* Character, float InDeltaTime
 	
 	if (UGeCharacterMovementComponent* GeMovement = Cast<UGeCharacterMovementComponent>(Character->GetCharacterMovement()))
 	{
+		// 使用 FFloat16 直接存储浮点时间值
 		SavedActualJumpApexTime = GeMovement->GetActualJumpApexTime();
 		SavedAccumulatedJumpTime = GeMovement->GetAccumulatedJumpTime();
 		SavedCapsuleStage = static_cast<uint8>(GeMovement->GetCurrentCapsuleStage());
@@ -57,8 +58,9 @@ void FSavedMove_GeCharacter::PrepMoveFor(ACharacter* Character)
 	
 	if (UGeCharacterMovementComponent* GeMovement = Cast<UGeCharacterMovementComponent>(Character->GetCharacterMovement()))
 	{
-		GeMovement->SetActualJumpApexTime(SavedActualJumpApexTime);
-		GeMovement->SetAccumulatedJumpTime(SavedAccumulatedJumpTime);
+		// 从 FFloat16 直接转换回 float
+		GeMovement->SetActualJumpApexTime(SavedActualJumpApexTime.GetFloat());
+		GeMovement->SetAccumulatedJumpTime(SavedAccumulatedJumpTime.GetFloat());
 		GeMovement->SetCurrentCapsuleStage(static_cast<EJumpCapsuleStage>(SavedCapsuleStage));
 	}
 }
@@ -79,6 +81,7 @@ void FGeCharacterNetworkMoveData::ClientFillNetworkMoveData(const FSavedMove_Cha
 	
 	if (const FSavedMove_GeCharacter* GeClientMove = static_cast<const FSavedMove_GeCharacter*>(&ClientMove))
 	{
+		// 复制 FFloat16 压缩值
 		SavedActualJumpApexTime = GeClientMove->SavedActualJumpApexTime;
 		SavedAccumulatedJumpTime = GeClientMove->SavedAccumulatedJumpTime;
 	}

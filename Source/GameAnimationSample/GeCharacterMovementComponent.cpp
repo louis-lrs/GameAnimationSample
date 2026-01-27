@@ -281,32 +281,14 @@ void UGeCharacterMovementComponent::ServerMove_PerformMovement(const FCharacterN
 			return;
 		}
 
-		if (const FGeCharacterNetworkMoveData* GeMoveData = static_cast<const FGeCharacterNetworkMoveData*>(&MoveData))
-		{
-			if (GeMoveData->SavedActualJumpApexTime > UE_KINDA_SMALL_NUMBER)
-			{
-				if (ActualJumpApexTime <= UE_KINDA_SMALL_NUMBER || 
-				    FMath::Abs(ActualJumpApexTime - GeMoveData->SavedActualJumpApexTime) > UE_KINDA_SMALL_NUMBER)
-				{
-					SetActualJumpApexTime(GeMoveData->SavedActualJumpApexTime);
-					UE_LOG_GATED(GDisplayLogCapsule, LogGeCharacterMovement, Error, this,
-					             TEXT("[DynamicCapsule] ServerMove: Applied client ActualJumpApexTime=%.4f"), 
-					             ActualJumpApexTime);
-				}
-			}
-			
-			if (FNetworkPredictionData_Server_GeCharacter* GeServerData = static_cast<FNetworkPredictionData_Server_GeCharacter*>(GetPredictionData_Server()))
-			{
-				const float RealAccumulatedJumpTime = GeServerData->GetServerAccumulatedJumpTime(
-					GeMoveData->SavedAccumulatedJumpTime, 
-					AccumulatedJumpTime);
-				SetAccumulatedJumpTime(RealAccumulatedJumpTime);
-			}
-		}
-
 		// Perform actual movement
 		if ((MyWorld->GetWorldSettings()->GetPauserPlayerState() == nullptr))
 		{
+			if (const FGeCharacterNetworkMoveData* GeMoveData = static_cast<const FGeCharacterNetworkMoveData*>(&MoveData))
+			{
+				OnApplyJumpTimeData(*GeMoveData);
+			}
+			
 			FScopedMovementUpdate ScopedCapsuleUpdate(bEnableScopedMovementUpdates ? UpdatedComponent : nullptr, EScopedUpdate::DeferredUpdates);
 			if (PC)
 			{
@@ -325,6 +307,32 @@ void UGeCharacterMovementComponent::ServerMove_PerformMovement(const FCharacterN
 	if (MoveData.NetworkMoveType == FCharacterNetworkMoveData::ENetworkMoveType::NewMove)
 	{
 		ServerMoveHandleClientError(ClientTimeStamp, DeltaTime, ClientAccel, MoveData.Location, MoveData.MovementBase, MoveData.MovementBaseBoneName, MoveData.MovementMode);
+	}
+}
+
+void UGeCharacterMovementComponent::OnApplyJumpTimeData(const FGeCharacterNetworkMoveData& GeMoveData)
+{
+	// 从 FFloat16 直接获取浮点值
+	const float ReceivedActualJumpApexTime = GeMoveData.SavedActualJumpApexTime.GetFloat();
+	if (ReceivedActualJumpApexTime > UE_KINDA_SMALL_NUMBER)
+	{
+		if (ActualJumpApexTime <= UE_KINDA_SMALL_NUMBER || 
+			FMath::Abs(ActualJumpApexTime - ReceivedActualJumpApexTime) > UE_KINDA_SMALL_NUMBER)
+		{
+			SetActualJumpApexTime(ReceivedActualJumpApexTime);
+			UE_LOG_GATED(GDisplayLogCapsule, LogGeCharacterMovement, Error, this,
+						 TEXT("[DynamicCapsule] ServerMove: Applied client ActualJumpApexTime=%.4f"), 
+						 ActualJumpApexTime);
+		}
+	}
+
+	if (FNetworkPredictionData_Server_GeCharacter* GeServerData = static_cast<FNetworkPredictionData_Server_GeCharacter*>(GetPredictionData_Server()))
+	{
+		const float ReceivedAccumulatedJumpTime = GeMoveData.SavedAccumulatedJumpTime.GetFloat();
+		const float RealAccumulatedJumpTime = GeServerData->GetServerAccumulatedJumpTime(
+			ReceivedAccumulatedJumpTime, 
+			AccumulatedJumpTime);
+		SetAccumulatedJumpTime(RealAccumulatedJumpTime);
 	}
 }
 
@@ -1026,6 +1034,11 @@ void UGeCharacterMovementComponent::InterruptDynamicCapsule(bool bRestoreCapsule
 {
 	if (!bIsDynamicCapsuleActive && !bPendingCapsuleRestore)
 	{
+		// If bRestoreCapsule is false, clear TargetMeshZOffset even if early returning
+		if (!bRestoreCapsule)
+		{
+			TargetMeshZOffset.Reset();
+		}
 		return;
 	}
 	
@@ -1054,6 +1067,7 @@ void UGeCharacterMovementComponent::InterruptDynamicCapsule(bool bRestoreCapsule
 		// Clear pending restore flag
 		bPendingCapsuleRestore = false;
 		// Clear mesh offset target to stop interpolation in clear-only mode
+		// Always clear TargetMeshZOffset when bRestoreCapsule is false
 		TargetMeshZOffset.Reset();
 		UE_LOG_GATED(GDisplayLogCapsule, LogGeCharacterMovement, Log, this, TEXT("[DynamicCapsule] %hs Interrupted and cleared runtime data"), __FUNCTION__);
 	}

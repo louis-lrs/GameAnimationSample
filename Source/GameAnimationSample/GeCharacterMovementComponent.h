@@ -66,6 +66,9 @@ public:
 	// Override to apply client's AccumulatedJumpTime on server
 	virtual void ServerMove_PerformMovement(const FCharacterNetworkMoveData& MoveData) override;
 	
+	// Apply jump time data from client move data
+	void OnApplyJumpTimeData(const FGeCharacterNetworkMoveData& GeMoveData);
+	
 	// Override to prevent delaying moves when CapsuleStage changes
 	virtual bool CanDelaySendingMove(const FSavedMovePtr& NewMovePtr) override;
 	

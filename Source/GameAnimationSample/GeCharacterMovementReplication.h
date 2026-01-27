@@ -14,8 +14,8 @@ class FSavedMove_GeCharacter : public FSavedMove_Character
 public:
 	typedef FSavedMove_Character Super;
 
-	float SavedActualJumpApexTime;
-	float SavedAccumulatedJumpTime;
+	FFloat16 SavedActualJumpApexTime;  // 使用 FFloat16 压缩存储时间
+	FFloat16 SavedAccumulatedJumpTime; // 使用 FFloat16 压缩存储时间
 	uint8 SavedCapsuleStage;
 	uint8 StartCapsuleStage;
 	uint8 EndCapsuleStage;
@@ -69,12 +69,12 @@ struct FGeCharacterNetworkMoveData : public FCharacterNetworkMoveData
 {
 	typedef FCharacterNetworkMoveData Super;
 	
-	float SavedActualJumpApexTime;
-	float SavedAccumulatedJumpTime;
+	FFloat16 SavedActualJumpApexTime;  // 使用 FFloat16 压缩存储时间
+	FFloat16 SavedAccumulatedJumpTime; // 使用 FFloat16 压缩存储时间
 
 	FGeCharacterNetworkMoveData()
-		: SavedActualJumpApexTime(0.f)
-		, SavedAccumulatedJumpTime(0.f)
+		: SavedActualJumpApexTime(0)
+		, SavedAccumulatedJumpTime(0)
 	{
 	}
 
