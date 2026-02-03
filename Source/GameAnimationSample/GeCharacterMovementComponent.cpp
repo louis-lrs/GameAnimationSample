@@ -895,9 +895,12 @@ void UGeCharacterMovementComponent::UpdateDynamicCapsule(float DeltaSeconds)
 		return;
 	}
 
+	// Get actual frame delta time instead of potentially combined move delta
+	const float ActualDeltaTime = GetWorld() ? GetWorld()->GetDeltaSeconds() : DeltaSeconds;
+	
 	ON_SCOPE_EXIT 
 	{ 
-		InterpMeshOffset(DeltaSeconds); 
+		InterpMeshOffset(ActualDeltaTime); 
 	};
 	
 	const bool bIsSimulatedProxy = (CharacterOwner->GetLocalRole() == ROLE_SimulatedProxy);
@@ -952,13 +955,13 @@ void UGeCharacterMovementComponent::UpdateDynamicCapsule(float DeltaSeconds)
 	if (IsFalling())
 	{
 		const float OldAccumulatedJumpTime = AccumulatedJumpTime;
-		AccumulatedJumpTime += DeltaSeconds;
+		AccumulatedJumpTime += ActualDeltaTime;
 		const EJumpCapsuleStage DesiredStage = CalculateDesiredStage();
 		const bool bSetStageResult = SetCapsuleStage(DesiredStage);
 		
 		UE_LOG_GATED(GDisplayLogCapsule, LogGeCharacterMovement, Verbose, this,
-				TEXT("[DynamicCapsule] %hs AccumulatedJumpTime=%.4f->%.4f, DeltaSeconds=%.4f"),
-				__FUNCTION__, OldAccumulatedJumpTime, AccumulatedJumpTime, DeltaSeconds);
+				TEXT("[DynamicCapsule] %hs AccumulatedJumpTime=%.4f->%.4f, ActualDeltaTime=%.4f (ParamDeltaTime=%.4f)"),
+				__FUNCTION__, OldAccumulatedJumpTime, AccumulatedJumpTime, ActualDeltaTime, DeltaSeconds);
 		
 		if (!bSetStageResult && DesiredStage != CurrentCapsuleStage)
 		{

@@ -52,6 +52,11 @@ bool FSavedMove_GeCharacter::CanCombineWith(const FSavedMovePtr& NewMove, AChara
 	return Super::CanCombineWith(NewMove, Character, MaxDelta);
 }
 
+void FSavedMove_GeCharacter::CombineWith(const FSavedMove_Character* OldMove, ACharacter* InCharacter, APlayerController* PC, const FVector& OldStartLocation)
+{
+	Super::CombineWith(OldMove, InCharacter, PC, OldStartLocation);
+}
+
 void FSavedMove_GeCharacter::PrepMoveFor(ACharacter* Character)
 {
 	Super::PrepMoveFor(Character);
