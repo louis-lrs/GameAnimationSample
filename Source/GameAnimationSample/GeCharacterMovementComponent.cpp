@@ -314,25 +314,36 @@ void UGeCharacterMovementComponent::OnApplyJumpTimeData(const FGeCharacterNetwor
 {
 	// 从 FFloat16 直接获取浮点值
 	const float ReceivedActualJumpApexTime = GeMoveData.SavedActualJumpApexTime.GetFloat();
+	const float OldActualJumpApexTime = ActualJumpApexTime;
 	if (ReceivedActualJumpApexTime > UE_KINDA_SMALL_NUMBER)
 	{
 		if (ActualJumpApexTime <= UE_KINDA_SMALL_NUMBER || 
 			FMath::Abs(ActualJumpApexTime - ReceivedActualJumpApexTime) > UE_KINDA_SMALL_NUMBER)
 		{
 			SetActualJumpApexTime(ReceivedActualJumpApexTime);
-			UE_LOG_GATED(GDisplayLogCapsule, LogGeCharacterMovement, Error, this,
-						 TEXT("[DynamicCapsule] ServerMove: Applied client ActualJumpApexTime=%.4f"), 
-						 ActualJumpApexTime);
+			UE_LOG_GATED(GDisplayLogCapsule, LogGeCharacterMovement, Warning, this,
+						 TEXT("[DynamicCapsule] ServerMove: Applied client ActualJumpApexTime: %.4f -> %.4f, Diff=%.4f"), 
+						 OldActualJumpApexTime, ActualJumpApexTime, ActualJumpApexTime - OldActualJumpApexTime);
 		}
 	}
 
 	if (FNetworkPredictionData_Server_GeCharacter* GeServerData = static_cast<FNetworkPredictionData_Server_GeCharacter*>(GetPredictionData_Server()))
 	{
 		const float ReceivedAccumulatedJumpTime = GeMoveData.SavedAccumulatedJumpTime.GetFloat();
+		const float OldAccumulatedJumpTime = AccumulatedJumpTime;
 		const float RealAccumulatedJumpTime = GeServerData->GetServerAccumulatedJumpTime(
 			ReceivedAccumulatedJumpTime, 
 			AccumulatedJumpTime);
 		SetAccumulatedJumpTime(RealAccumulatedJumpTime);
+		
+		const float TimeDiff = FMath::Abs(RealAccumulatedJumpTime - ReceivedAccumulatedJumpTime);
+		if (TimeDiff > 0.01f)
+		{
+			UE_LOG_GATED(GDisplayLogCapsule, LogGeCharacterMovement, Warning, this,
+				TEXT("[DynamicCapsule] ServerMove: AccumulatedJumpTime Sync: Client=%.4f, ServerOld=%.4f, ServerNew=%.4f, Diff=%.4f, CurrentStage=%s"),
+				ReceivedAccumulatedJumpTime, OldAccumulatedJumpTime, RealAccumulatedJumpTime, TimeDiff,
+				*UEnum::GetValueAsString(CurrentCapsuleStage));
+		}
 	}
 }
 
@@ -385,9 +396,10 @@ void UGeCharacterMovementComponent::OnMovementUpdated(float DeltaSeconds, const 
 void UGeCharacterMovementComponent::OnReachedJumpApex()
 {	
 	ActualJumpApexTime = AccumulatedJumpTime;
-	UE_LOG_GATED(GDisplayLogCapsule, LogGeCharacterMovement, Log, this,
-	             TEXT("[DynamicCapsule] %hs ExpectedJumpApexTime=%.4f, ActualJumpApexTime=%.4f"), __FUNCTION__,
-	             ExpectedJumpApexTime, ActualJumpApexTime);
+	const float TimeDiff = ActualJumpApexTime - ExpectedJumpApexTime;
+	UE_LOG_GATED(GDisplayLogCapsule, LogGeCharacterMovement, Warning, this,
+		TEXT("[DynamicCapsule] %hs ExpectedJumpApexTime=%.4f, ActualJumpApexTime=%.4f, Diff=%.4f"),
+		__FUNCTION__, ExpectedJumpApexTime, ActualJumpApexTime, TimeDiff);
 }
 
 void UGeCharacterMovementComponent::OnLandedCallback(const FHitResult& Hit)
@@ -477,6 +489,8 @@ EJumpCapsuleStage UGeCharacterMovementComponent::CalculateDesiredStage()
 		// Safety check: prevent division by zero
 		if (ExpectedJumpApexTime <= UE_KINDA_SMALL_NUMBER)
 		{
+			UE_LOG_GATED(GDisplayLogCapsule, LogGeCharacterMovement, Verbose, this, 
+				TEXT("[DynamicCapsule] %hs Invalid ExpectedJumpApexTime=%.4f, returning FullSize"), __FUNCTION__, ExpectedJumpApexTime);
 			return EJumpCapsuleStage::FullSize;
 		}
 		
@@ -495,20 +509,25 @@ EJumpCapsuleStage UGeCharacterMovementComponent::CalculateDesiredStage()
 		{
 			MaxReachedStage = TargetStage;
 		}
-		UE_LOG_GATED(GDisplayLogCapsule, LogGeCharacterMovement, Verbose, this, TEXT("[DynamicCapsule] %hs Progress=%.2f, Target=%s, MaxReached=%s"), 
-			__FUNCTION__, Progress, *UEnum::GetValueAsString(TargetStage), *UEnum::GetValueAsString(MaxReachedStage));
+		UE_LOG_GATED(GDisplayLogCapsule, LogGeCharacterMovement, Verbose, this, 
+			TEXT("[DynamicCapsule] %hs Ascending: Progress=%.4f (Accumulated=%.4f, ExpectedJumpApex=%.4f), Vel=%s, Target=%s, MaxReached=%s"),
+			__FUNCTION__, Progress, AccumulatedJumpTime, ExpectedJumpApexTime, *Velocity.ToCompactString(), *UEnum::GetValueAsString(TargetStage), *UEnum::GetValueAsString(MaxReachedStage));
 	}
 	else
 	{
 		// Don't enter a shrunk stage if we didn't reach it during ascent.
 		if (MaxReachedStage == EJumpCapsuleStage::FullSize)
 		{
+			UE_LOG_GATED(GDisplayLogCapsule, LogGeCharacterMovement, Verbose, this,
+				TEXT("[DynamicCapsule] %hs MaxReachedStage=FullSize, returning FullSize"), __FUNCTION__);
 			return EJumpCapsuleStage::FullSize;
 		}
 		
 		// Safety check: prevent division by zero
 		if (ActualJumpApexTime <= UE_KINDA_SMALL_NUMBER)
 		{
+			UE_LOG_GATED(GDisplayLogCapsule, LogGeCharacterMovement, Verbose, this,
+				TEXT("[DynamicCapsule] %hs Invalid ActualJumpApexTime=%.4f, returning FullSize"), __FUNCTION__, ActualJumpApexTime);
 			return EJumpCapsuleStage::FullSize;
 		}
 		
@@ -531,8 +550,9 @@ EJumpCapsuleStage UGeCharacterMovementComponent::CalculateDesiredStage()
 		{
 			TargetStage = MaxReachedStage;
 		}
-		UE_LOG_GATED(GDisplayLogCapsule, LogGeCharacterMovement, Verbose, this, TEXT("[DynamicCapsule] %hs FallingProgress=%.2f, Target=%s, MaxReached=%s"), 
-			__FUNCTION__, FallingProgress, *UEnum::GetValueAsString(TargetStage), *UEnum::GetValueAsString(MaxReachedStage));
+		UE_LOG_GATED(GDisplayLogCapsule, LogGeCharacterMovement, Verbose, this, 
+			TEXT("[DynamicCapsule] %hs Descending: FallingProgress=%.4f (Accumulated=%.4f, ActualJumpApex=%.4f), Vel=%s, Target=%s, MaxReached=%s"), 
+			__FUNCTION__, FallingProgress, AccumulatedJumpTime, ActualJumpApexTime, *Velocity.ToCompactString(), *UEnum::GetValueAsString(TargetStage), *UEnum::GetValueAsString(MaxReachedStage));
 	}
 	return TargetStage;
 }
@@ -587,7 +607,6 @@ bool UGeCharacterMovementComponent::SetCapsuleStage(EJumpCapsuleStage NewCapsule
 		CurrentCapsuleStage = NewCapsuleStage;
 		return true;
 	}
-	UE_LOG_GATED(GDisplayLogCapsule, LogGeCharacterMovement, Log, this, TEXT("[DynamicCapsule] %hs Pending: %s"), __FUNCTION__, *UEnum::GetValueAsString(NewCapsuleStage));
 
 	/* ------------------------ Physics Probe ------------------------ */
 	const float ScaledTotalZDelta = TotalZDelta * ComponentScale;
@@ -598,10 +617,18 @@ bool UGeCharacterMovementComponent::SetCapsuleStage(EJumpCapsuleStage NewCapsule
 	const FVector PawnLocation = UpdatedComponent->GetComponentLocation();
 	const FQuat PawnRotation = UpdatedComponent->GetComponentQuat();
 	FVector ProposedLocation = PawnLocation + FVector(0.f, 0.f, ScaledTotalZDelta);
-    
+	
+	UE_LOG_GATED(GDisplayLogCapsule, LogGeCharacterMovement, Log, this, 
+		TEXT("[DynamicCapsule] %hs Pending: %s -> %s, OldHalfHeight=%.2f, NewHalfHeight=%.2f, AccumulatedJumpTime=%.4f"), __FUNCTION__,
+		*UEnum::GetValueAsString(CurrentCapsuleStage), *UEnum::GetValueAsString(NewCapsuleStage), OldHalfHeight, NewHalfHeight, AccumulatedJumpTime);
+	
     const bool bIsSimulatedProxy = (CharacterOwner->GetLocalRole() == ROLE_SimulatedProxy);
     if (!bIsSimulatedProxy)
     {
+	    UE_LOG_GATED(GDisplayLogCapsule, LogGeCharacterMovement, Verbose, this,
+		    TEXT("[DynamicCapsule] %hs CollisionCheck: PawnLocation=%s, ProposedLocation=%s, ScaledTotalZDelta=%.4f"),
+		    __FUNCTION__, *PawnLocation.ToCompactString(), *ProposedLocation.ToCompactString(), ScaledTotalZDelta);
+	    
 	    constexpr float SweepInflation = UE_KINDA_SMALL_NUMBER * 10.f; // Preventing precision error
 
     	// Use current capsule for Sweeping
@@ -636,7 +663,8 @@ bool UGeCharacterMovementComponent::SetCapsuleStage(EJumpCapsuleStage NewCapsule
 		    {
 		    	// Adjust proposed location to avoid floor collision
 			    ProposedLocation.Z = FloorHit.Location.Z - ScaledHalfHeightAdjust + MAX_FLOOR_DIST;
-		    	UE_LOG_GATED(GDisplayLogCapsule, LogGeCharacterMovement, Error, this, TEXT("[DynamicCapsule] %hs Floor Hit! Adjusted ProposedLocation=%s"), __FUNCTION__, *ProposedLocation.ToCompactString());
+		    	UE_LOG_GATED(GDisplayLogCapsule, LogGeCharacterMovement, Error, this, TEXT("[DynamicCapsule] %hs Floor Hit! Adjusted ProposedLocation=%s, HitLocation=%s, BottomDropDist=%.4f"), 
+			    	__FUNCTION__, *ProposedLocation.ToCompactString(), *FloorHit.Location.ToCompactString(), BottomDropDist);
 		    }
 	    }
 
@@ -663,7 +691,8 @@ bool UGeCharacterMovementComponent::SetCapsuleStage(EJumpCapsuleStage NewCapsule
 		    {
 		    	// Adjust proposed location to avoid ceiling collision
 			    ProposedLocation.Z = CeilingHit.Location.Z + ScaledHalfHeightAdjust - MAX_FLOOR_DIST;
-			    UE_LOG_GATED(GDisplayLogCapsule, LogGeCharacterMovement, Log, this, TEXT("[DynamicCapsule] %hs CeilingHit Hit! Adjusted ProposedLocation=%s"), __FUNCTION__, *ProposedLocation.ToCompactString());
+			    UE_LOG_GATED(GDisplayLogCapsule, LogGeCharacterMovement, Error, this, TEXT("[DynamicCapsule] %hs CeilingHit Hit! Adjusted ProposedLocation=%s, HitLocation=%s, TopLiftDist=%.4f"), 
+				    __FUNCTION__, *ProposedLocation.ToCompactString(), *CeilingHit.Location.ToCompactString(), TopLiftDist);
 		    }
 	    }
 
@@ -690,9 +719,11 @@ bool UGeCharacterMovementComponent::SetCapsuleStage(EJumpCapsuleStage NewCapsule
 	    if (bEncroached)
 	    {
 	    	// Do not perform capsule change if encorached eventually
-		    UE_LOG_GATED(GDisplayLogCapsule, LogGeCharacterMovement, Warning, this, TEXT("[DynamicCapsule] %hs Failed: Encroached (Ceilling/Floor) at ProposedLocation=%s"), __FUNCTION__, *ProposedLocation.ToCompactString());
+		    UE_LOG_GATED(GDisplayLogCapsule, LogGeCharacterMovement, Warning, this, TEXT("[DynamicCapsule] %hs FAILED: Encroached (Ceilling/Floor) at ProposedLocation=%s"), __FUNCTION__, *ProposedLocation.ToCompactString());
 		    return false;
 	    }
+	    
+	    UE_LOG_GATED(GDisplayLogCapsule, LogGeCharacterMovement, Verbose, this, TEXT("[DynamicCapsule] %hs CollisionCheck PASSED: ProposedLocation=%s"), __FUNCTION__, *ProposedLocation.ToCompactString());
     }
 
 	/* ------------------------ Commit Changes ------------------------ */
@@ -706,8 +737,15 @@ bool UGeCharacterMovementComponent::SetCapsuleStage(EJumpCapsuleStage NewCapsule
 		
 		// Force network update to prevent replication delay causing visual desync
 		CharacterOwner->ForceNetUpdate();
+		
+		UE_LOG_GATED(GDisplayLogCapsule, LogGeCharacterMovement, Log, this, TEXT("[DynamicCapsule] %hs SUCCEED (Server): %s, AccumulatedJumpTime=%.4f"), 
+			__FUNCTION__, *UEnum::GetValueAsString(NewCapsuleStage), AccumulatedJumpTime);
 	}
-	UE_LOG_GATED(GDisplayLogCapsule, LogGeCharacterMovement, Log, this, TEXT("[DynamicCapsule] %hs Succeed: %s"), __FUNCTION__, *UEnum::GetValueAsString(NewCapsuleStage));
+	else
+	{
+		UE_LOG_GATED(GDisplayLogCapsule, LogGeCharacterMovement, Log, this, TEXT("[DynamicCapsule] %hs SUCCEED (Client): %s, AccumulatedJumpTime=%.4f"), 
+			__FUNCTION__, *UEnum::GetValueAsString(NewCapsuleStage), AccumulatedJumpTime);
+	}
 
 	// 1. Record state BEFORE changes for Visual Compensation
 	const float PreActionCapsuleZ = UpdatedComponent->GetComponentLocation().Z;
@@ -725,10 +763,24 @@ bool UGeCharacterMovementComponent::SetCapsuleStage(EJumpCapsuleStage NewCapsule
 		Capsule->SetCapsuleHalfHeight(NewHalfHeight, true);
 	
 		// 3. Move Capsule
-		UpdatedComponent->MoveComponent(ProposedLocation - PawnLocation, PawnRotation, false, nullptr, EMoveComponentFlags::MOVECOMP_NoFlags, ETeleportType::TeleportPhysics);
+		const FVector MoveDelta = ProposedLocation - PawnLocation;
+		const bool bMoveResult = UpdatedComponent->MoveComponent(MoveDelta, PawnRotation, false, nullptr, EMoveComponentFlags::MOVECOMP_NoFlags, ETeleportType::TeleportPhysics);
+		
+		if (!bMoveResult)
+		{
+			UE_LOG_GATED(GDisplayLogCapsule, LogGeCharacterMovement, Error, this, TEXT("[DynamicCapsule] %hs MoveComponent FAILED: MoveDelta=%s, ProposedLocation=%s, PawnLocation=%s"),
+				__FUNCTION__, *MoveDelta.ToCompactString(), *ProposedLocation.ToCompactString(), *PawnLocation.ToCompactString());
+		}
 		
 		// Force update mesh transform in case not propagated because of IsDeferringMovementUpdates
 		UpdatedComponent->UpdateChildTransforms();
+		
+		const FVector PostMoveLocation = UpdatedComponent->GetComponentLocation();
+		if (!PostMoveLocation.Equals(ProposedLocation, 1.0f))
+		{
+			UE_LOG_GATED(GDisplayLogCapsule, LogGeCharacterMovement, Error, this, TEXT("[DynamicCapsule] %hs Location Mismatch: Proposed=%s, Actual=%s, Delta=%s"),
+				__FUNCTION__, *ProposedLocation.ToCompactString(), *PostMoveLocation.ToCompactString(), *(PostMoveLocation - ProposedLocation).ToCompactString());
+		}
 	}
 	
 	bForceNextFloorCheck = true;
@@ -776,8 +828,8 @@ bool UGeCharacterMovementComponent::SetCapsuleStage(EJumpCapsuleStage NewCapsule
 		CharacterMesh->SetRelativeLocation(MeshRelativeLocation);
 		TargetMeshZOffset = IdealMeshZ;
 	}
-	UE_LOG_GATED(GDisplayLogCapsule, LogGeCharacterMovement, Verbose, this, TEXT("[DynamicCapsule] %hs MeshLoc=%s, IdealMeshZ=%.2f, CompensatedMeshZ=%.2f"),
-		__FUNCTION__, *CharacterMesh->GetRelativeLocation().ToCompactString(), IdealMeshZ, CompensatedMeshZ);
+	UE_LOG_GATED(GDisplayLogCapsule, LogGeCharacterMovement, Verbose, this, TEXT("[DynamicCapsule] %hs SUCCEED: %s, MeshLoc=%s, IdealMeshZ=%.2f, CompensatedMeshZ=%.2f"),
+		__FUNCTION__, *UEnum::GetValueAsString(NewCapsuleStage), *CharacterMesh->GetRelativeLocation().ToCompactString(), IdealMeshZ, CompensatedMeshZ);
 	
 	if (FNetworkPredictionData_Client_Character* ClientData = GetPredictionData_Client_Character())
 	{
@@ -899,8 +951,22 @@ void UGeCharacterMovementComponent::UpdateDynamicCapsule(float DeltaSeconds)
 	
 	if (IsFalling())
 	{
+		const float OldAccumulatedJumpTime = AccumulatedJumpTime;
 		AccumulatedJumpTime += DeltaSeconds;
-		SetCapsuleStage(CalculateDesiredStage());
+		const EJumpCapsuleStage DesiredStage = CalculateDesiredStage();
+		const bool bSetStageResult = SetCapsuleStage(DesiredStage);
+		
+		UE_LOG_GATED(GDisplayLogCapsule, LogGeCharacterMovement, Verbose, this,
+				TEXT("[DynamicCapsule] %hs AccumulatedJumpTime=%.4f->%.4f, DeltaSeconds=%.4f"),
+				__FUNCTION__, OldAccumulatedJumpTime, AccumulatedJumpTime, DeltaSeconds);
+		
+		if (!bSetStageResult && DesiredStage != CurrentCapsuleStage)
+		{
+			UE_LOG_GATED(GDisplayLogCapsule, LogGeCharacterMovement, Warning, this,
+				TEXT("[DynamicCapsule] %hs SetCapsuleStage FAILED: DesiredStage=%s, CurrentStage=%s, AccumulatedJumpTime=%.4f->%.4f, Location=%s"),
+				__FUNCTION__, *UEnum::GetValueAsString(DesiredStage), *UEnum::GetValueAsString(CurrentCapsuleStage),
+				OldAccumulatedJumpTime, AccumulatedJumpTime, *UpdatedComponent->GetComponentLocation().ToCompactString());
+		}
 	}
 	else
 	{
@@ -994,7 +1060,9 @@ void UGeCharacterMovementComponent::OnDynamicCapsuleBegin()
 	const float theGravityZ = GetGravityZ();
 	if (theGravityZ < 0.f)
 	{
-		ExpectedJumpApexTime = FMath::Abs(JumpZVelocity / theGravityZ);			
+		const float ActualInitialVelocityZ = Velocity.Z;
+		const float InitialVelocityZ = (ActualInitialVelocityZ > UE_KINDA_SMALL_NUMBER)  ? ActualInitialVelocityZ : JumpZVelocity;
+		ExpectedJumpApexTime = FMath::Abs(InitialVelocityZ / theGravityZ);
 	}
 	else
 	{
