@@ -879,8 +879,8 @@ void UGeCharacterMovementComponent::InterpMeshOffset(float DeltaTime)
 	}
 	MeshRelativeLocation.Z = NewMeshZ;
 	CharacterMesh->SetRelativeLocation(MeshRelativeLocation);
-	UE_LOG_GATED(GDisplayLogCapsule, LogGeCharacterMovement, Verbose, this, TEXT("[DynamicCapsule] %hs MeshLoc=%s, NewMeshZ=%.2f"),
-		__FUNCTION__, *CharacterMesh->GetRelativeLocation().ToCompactString(), NewMeshZ);
+	UE_LOG_GATED(GDisplayLogCapsule, LogGeCharacterMovement, Verbose, this, TEXT("[DynamicCapsule] %hs MeshLoc=%s, DesiredZ=%.2f, DeltaTime=%.6f"),
+		__FUNCTION__, *CharacterMesh->GetRelativeLocation().ToCompactString(), DesiredZ, DeltaTime);
 }
 
 void UGeCharacterMovementComponent::UpdateDynamicCapsule(float DeltaSeconds)
@@ -1394,3 +1394,189 @@ void UGeCharacterMovementComponent::DisplayDebugForGame(float DeltaTime, bool bP
 	UKismetSystemLibrary::DrawDebugPoint(this, UpdatedComponent->GetComponentLocation(), 5.f, FLinearColor::Yellow, 2.f);
 }
 
+void UGeCharacterMovementComponent::MoveAlongFloor(const FVector& InVelocity, float DeltaSeconds, FStepDownResult* OutStepDownResult)
+{
+	if (!CurrentFloor.IsWalkableFloor())
+	{
+		return;
+	}
+
+	// Move along the current floor
+	const FVector Delta = ProjectToGravityFloor(InVelocity) * DeltaSeconds;
+	FHitResult Hit(1.f);
+	FVector RampVector = ComputeGroundMovementDelta(Delta, CurrentFloor.HitResult, CurrentFloor.bLineTrace);
+	SafeMoveUpdatedComponent(RampVector, UpdatedComponent->GetComponentQuat(), true, Hit);
+	float LastMoveTimeSlice = DeltaSeconds;
+	
+	if (Hit.bStartPenetrating)
+	{
+		// Allow this hit to be used as an impact we can deflect off, otherwise we do nothing the rest of the update and appear to hitch.
+		HandleImpact(Hit);
+		SlideAlongSurface(Delta, 1.f, Hit.Normal, Hit, true);
+
+		if (Hit.bStartPenetrating)
+		{
+			OnCharacterStuckInGeometry(&Hit);
+		}
+	}
+	else if (Hit.IsValidBlockingHit())
+	{
+		// We impacted something (most likely another ramp, but possibly a barrier).
+		float PercentTimeApplied = Hit.Time;
+		if ((Hit.Time > 0.f) && (GetGravitySpaceZ(Hit.Normal) > UE_KINDA_SMALL_NUMBER) && IsWalkable(Hit))
+		{
+			// Another walkable ramp.
+			const float InitialPercentRemaining = 1.f - PercentTimeApplied;
+			RampVector = ComputeGroundMovementDelta(Delta * InitialPercentRemaining, Hit, false);
+			LastMoveTimeSlice = InitialPercentRemaining * LastMoveTimeSlice;
+			SafeMoveUpdatedComponent(RampVector, UpdatedComponent->GetComponentQuat(), true, Hit);
+
+			const float SecondHitPercent = Hit.Time * InitialPercentRemaining;
+			PercentTimeApplied = FMath::Clamp(PercentTimeApplied + SecondHitPercent, 0.f, 1.f);
+		}
+
+		if (Hit.IsValidBlockingHit())
+		{
+			if (CanStepUp(Hit) || (CharacterOwner->GetMovementBase() != nullptr && Hit.HitObjectHandle == CharacterOwner->GetMovementBase()->GetOwner()))
+			{
+				// hit a barrier, try to step up
+				const FVector PreStepUpLocation = UpdatedComponent->GetComponentLocation();
+				if (!StepUp(GetGravityDirection(), Delta * (1.f - PercentTimeApplied), Hit, OutStepDownResult))
+				{
+					UE_LOG_ENHANCED(LogGeCharacterMovement, Verbose, this, TEXT("- StepUp (ImpactNormal %s, Normal %s"), *Hit.ImpactNormal.ToString(), *Hit.Normal.ToString());
+					HandleImpact(Hit, LastMoveTimeSlice, RampVector);
+					SlideAlongSurface(Delta, 1.f - PercentTimeApplied, Hit.Normal, Hit, true);
+				}
+				else
+				{
+					UE_LOG_ENHANCED(LogGeCharacterMovement, Verbose, this, TEXT("+ StepUp (ImpactNormal %s, Normal %s"), *Hit.ImpactNormal.ToString(), *Hit.Normal.ToString());
+					if (!bMaintainHorizontalGroundVelocity)
+					{
+						// Don't recalculate velocity based on this height adjustment, if considering vertical adjustments. Only consider horizontal movement.
+						bJustTeleported = true;
+						const float StepUpTimeSlice = (1.f - PercentTimeApplied) * DeltaSeconds;
+						if (!HasAnimRootMotion() && !CurrentRootMotion.HasOverrideVelocity() && StepUpTimeSlice >= UE_KINDA_SMALL_NUMBER)
+						{
+							Velocity = (UpdatedComponent->GetComponentLocation() - PreStepUpLocation) / StepUpTimeSlice;
+							Velocity = ProjectToGravityFloor(Velocity);
+						}
+					}
+				}
+			}
+			else if (Hit.Component.IsValid() && !Hit.Component.Get()->CanCharacterStepUp(CharacterOwner))
+			{
+				HandleImpact(Hit, LastMoveTimeSlice, RampVector);
+				SlideAlongSurface(Delta, 1.f - PercentTimeApplied, Hit.Normal, Hit, true);
+			}
+		}
+	}
+}
+
+float UGeCharacterMovementComponent::SlideAlongSurface(const FVector& Delta, float Time, const FVector& InNormal, FHitResult& Hit, bool bHandleImpact)
+{
+	if (!Hit.bBlockingHit)
+	{
+		return 0.f;
+	}
+
+	FVector Normal(InNormal);
+	const FVector::FReal NormalZ = GetGravitySpaceZ(Normal);
+
+	if (IsMovingOnGround())
+	{
+		if (NormalZ > 0.f)
+		{
+			// Normal pointing up: flatten if the surface is not walkable to prevent pushing the character up steep slopes
+			if (!IsWalkable(Hit))
+			{
+				Normal = ProjectToGravityFloor(Normal).GetSafeNormal();
+			}
+		}
+		else if (NormalZ < -UE_KINDA_SMALL_NUMBER)
+		{
+			// Don't push down into the floor when the impact is on the upper portion of the capsule.
+			if (CurrentFloor.FloorDist < MIN_FLOOR_DIST && CurrentFloor.bBlockingHit)
+			{
+				const FVector FloorNormal = CurrentFloor.HitResult.Normal;
+				const bool bFloorOpposedToMovement = (Delta | FloorNormal) < 0.f && (GetGravitySpaceZ(FloorNormal) < 1.f - UE_DELTA);
+				if (bFloorOpposedToMovement)
+				{
+					Normal = FloorNormal;
+				}
+				
+				Normal = ProjectToGravityFloor(Normal).GetSafeNormal();
+			}
+		}
+	}
+
+	float PercentTimeApplied = 0.f;
+	const FVector OldHitNormal = Normal;
+	const FString OldWallActor = GetNameSafe(Hit.GetActor());
+
+	FVector SlideDelta = ComputeSlideVector(Delta, Time, Normal, Hit);
+	if ((SlideDelta | Delta) > 0.f)
+	{
+		const FQuat Rotation = UpdatedComponent->GetComponentQuat();
+		SafeMoveUpdatedComponent(SlideDelta, Rotation, true, Hit);
+
+		const float FirstHitPercent = Hit.Time;
+		PercentTimeApplied = FirstHitPercent;
+		if (Hit.IsValidBlockingHit())
+		{
+			// Notify first impact
+			if (bHandleImpact)
+			{
+				HandleImpact(Hit, FirstHitPercent * Time, SlideDelta);
+			}
+
+			// Compute new slide normal when hitting multiple surfaces.
+			TwoWallAdjust(SlideDelta, Hit, OldHitNormal);
+
+			const bool bNearlyZero = SlideDelta.IsNearlyZero(1e-3f);
+			const bool bForward   = (SlideDelta | Delta) > 0.f;
+
+			// Debug information
+			{
+				const FVector NewHitNormal = Hit.Normal;
+				const FString NewWallActor = GetNameSafe(Hit.GetActor());
+				const float CosAngle = FMath::Clamp(OldHitNormal | NewHitNormal, -1.f, 1.f);
+				const float AngleDeg = FMath::RadiansToDegrees(FMath::Acos(CosAngle));
+				UE_LOG_ENHANCED(LogGeCharacterMovement, Verbose, this,
+						TEXT("%hs Angle=%.2f°, OldHitNormal=%s, NewHitNormal=%s, SlideDelta=%s, bNearlyZero=%d, bForward=%d"),
+						__FUNCTION__, AngleDeg, *OldHitNormal.ToCompactString(), *NewHitNormal.ToCompactString(), *SlideDelta.ToCompactString(), bNearlyZero, bForward);
+			
+				const FVector Start = UpdatedComponent->GetComponentLocation();
+				DrawDebugDirectionalArrow(GetWorld(), Start, Start + NewHitNormal * 30.f, 4.0f, FColor::Red, false, 10.0f);
+				DrawDebugDirectionalArrow(GetWorld(), Start, Start + OldHitNormal * 30.f, 4.0f, FColor::Green, false, 10.0f);
+				DrawDebugDirectionalArrow(GetWorld(), Start, Start + Delta.GetSafeNormal() * 30.f, 4.0f, FColor::Blue, false, 10.0f);
+				DrawDebugDirectionalArrow(GetWorld(), Start, Start + SlideDelta.GetSafeNormal() * 30.f, 4.0f, FColor::Yellow, false, 10.0f);
+			}
+			
+			// Only proceed if the new direction is of significant length and not in reverse of original attempted move.
+			if (!bNearlyZero && bForward)
+			{
+				// Perform second move
+				SafeMoveUpdatedComponent(SlideDelta, Rotation, true, Hit);
+				const float SecondHitPercent = Hit.Time * (1.f - FirstHitPercent);
+				PercentTimeApplied += SecondHitPercent;
+
+				// Notify second impact
+				if (bHandleImpact && Hit.bBlockingHit)
+				{
+					HandleImpact(Hit, SecondHitPercent * Time, SlideDelta);
+				}
+			}
+		}
+
+		const float FinalPercent = FMath::Clamp(PercentTimeApplied, 0.f, 1.f);
+		return FinalPercent;
+	}
+	
+	return 0.f;
+}
+
+void UGeCharacterMovementComponent::TwoWallAdjust(FVector& WorldSpaceDelta, const FHitResult& Hit, const FVector& OldHitNormal) const
+{
+	// Call parent (UCharacterMovementComponent) to perform the base two-wall adjustment first
+	Super::TwoWallAdjust(WorldSpaceDelta, Hit, OldHitNormal);
+}

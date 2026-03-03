@@ -53,23 +53,15 @@ protected:
 	virtual void BeginPlay() override;
 
 public:
-	// Called every frame
+	//~ Begin UActorComponent Interface
 	virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
-	
-	// Override to setup replication rules
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
+	//~ End UActorComponent Interface
 	
-	// Override to use custom prediction data
+	//~ Begin UCharacterMovementComponent Interface
 	virtual FNetworkPredictionData_Client* GetPredictionData_Client() const override;
 	virtual FNetworkPredictionData_Server* GetPredictionData_Server() const override;
-	
-	// Override to apply client's AccumulatedJumpTime on server
 	virtual void ServerMove_PerformMovement(const FCharacterNetworkMoveData& MoveData) override;
-	
-	// Apply jump time data from client move data
-	void OnApplyJumpTimeData(const FGeCharacterNetworkMoveData& GeMoveData);
-	
-	// Override to prevent delaying moves when CapsuleStage changes
 	virtual bool CanDelaySendingMove(const FSavedMovePtr& NewMovePtr) override;
 	
 	virtual void OnMovementModeChanged(EMovementMode PreviousMovementMode, uint8 PreviousCustomMode) override;
@@ -78,6 +70,15 @@ public:
 	virtual void ProcessLanded(const FHitResult& Hit, float remainingTime, int32 Iterations) override;
 	virtual void OnMovementUpdated(float DeltaSeconds, const FVector& OldLocation, const FVector& OldVelocity) override;
 	
+	virtual void MoveAlongFloor(const FVector& InVelocity, float DeltaSeconds, FStepDownResult* OutStepDownResult = nullptr) override;
+	virtual float SlideAlongSurface(const FVector& Delta, float Time, const FVector& InNormal, FHitResult& Hit, bool bHandleImpact) override;
+	virtual void TwoWallAdjust(FVector& WorldSpaceDelta, const FHitResult& Hit, const FVector& OldHitNormal) const override;
+	//~ End UCharacterMovementComponent Interface
+
+	// Apply jump time data from client move data
+	void OnApplyJumpTimeData(const FGeCharacterNetworkMoveData& GeMoveData);
+
+	//~ Begin Virtual Functions Declared In This Class (Can Be Overridden By Subclasses)
 	UFUNCTION()
 	virtual void OnReachedJumpApex();
 	
@@ -85,6 +86,8 @@ public:
 	virtual void OnLandedCallback(const FHitResult& Hit);
 
 	virtual void DisplayDebugForGame(float DeltaTime, bool bPrintToScreen = true, bool bPrintToLog = false);
+	//~ End Virtual Functions Declared In This Class
+
 	FVector GetCurrentVelocity() const { return Velocity; }
 	
 #pragma region DynamicCapsule
