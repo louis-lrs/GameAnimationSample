@@ -28,16 +28,52 @@ static bool GDisplayLogCapsule = false;
 
 namespace GeCharacterMovementCVars
 {
+	/** Whether to enable dynamic capsule size adjustment while jumping. */
 	static bool bEnableDynamicCapusle = true;
 	FAutoConsoleVariableRef CVarEnableDynamicCapusle(
 		TEXT("a.AnimSkill.Movement.EnableDynamicCapusle"),
 		bEnableDynamicCapusle,
-		TEXT(""));
+		TEXT("Enable dynamic capsule size adjustment. 1 = enabled (default), 0 = disabled."));
     	
+	/** Whether to enable capsule size change logging for debug purposes. */
 	FAutoConsoleVariableRef CVarEnableLogCapsule(
 		TEXT("a.AnimSkill.Movement.EnableLogCapsule"),
 		GDisplayLogCapsule,
-		TEXT(""));
+		TEXT("Enable verbose logging of capsule size changes. 1 = enabled, 0 = disabled (default)."));
+
+	/** Controls the branch of SlideAlongSurface. */
+	static int32 SlideNormalZFix = 0;
+	FAutoConsoleVariableRef CVarSlideNormalZFix(
+		TEXT("p.Ge.SlideNormalZFix"),
+		SlideNormalZFix,
+		TEXT("SlideAlongSurface NormalZ<0 fix mode:\n"
+		     "  0 = Original (always ProjectToGravityFloor)\n"
+		     "  1 = ConditionalProject (replace with floor normal when opposed, skip flatten; else flatten)\n"
+		     "  2 = SkipFixup (skip NormalZ<0 fixup block entirely, no SlideDelta override)\n"
+		     "  3 = TwoWallSlide (skip NormalZ<0 fixup block + override SlideDelta at concave corners)\n"
+		     "  4 = TwoWallSlide (same as 3, enabled separately)"));
+
+	/**
+	 * 模式能力查询函数 —— 扩展新模式时只需修改这里，调用处无需改动。
+	 *
+	 * SlideMode_SkipsFixup        : 是否跳过 NormalZ<0 fixup 块
+	 * SlideMode_UsesTwoWall       : 是否启用 TwoWallSlide SlideDelta 修正
+	 * SlideMode_PreservesHorizSpeed: 是否在 TwoWallSlide 中保留水平速度
+	 */
+	static bool SlideMode_SkipsFixup(int32 Mode)
+	{
+		return Mode == 2 || Mode == 3 || Mode == 4;
+	}
+
+	static bool SlideMode_UsesTwoWall(int32 Mode)
+	{
+		return Mode == 3 || Mode == 4;
+	}
+
+	static bool SlideMode_PreservesHorizSpeed(int32 Mode)
+	{
+		return Mode == 4;
+	}
 }
 
 // Helper function to check if debug should be enabled based on CVAR value and role
@@ -1481,6 +1517,7 @@ float UGeCharacterMovementComponent::SlideAlongSurface(const FVector& Delta, flo
 
 	FVector Normal(InNormal);
 	const FVector::FReal NormalZ = GetGravitySpaceZ(Normal);
+	const int32 SlideFixMode = GeCharacterMovementCVars::SlideNormalZFix;
 
 	if (IsMovingOnGround())
 	{
@@ -1495,16 +1532,21 @@ float UGeCharacterMovementComponent::SlideAlongSurface(const FVector& Delta, flo
 		else if (NormalZ < -UE_KINDA_SMALL_NUMBER)
 		{
 			// Don't push down into the floor when the impact is on the upper portion of the capsule.
-			if (CurrentFloor.FloorDist < MIN_FLOOR_DIST && CurrentFloor.bBlockingHit)
+			if (!GeCharacterMovementCVars::SlideMode_SkipsFixup(SlideFixMode) && CurrentFloor.FloorDist < MIN_FLOOR_DIST && CurrentFloor.bBlockingHit)
 			{
 				const FVector FloorNormal = CurrentFloor.HitResult.Normal;
 				const bool bFloorOpposedToMovement = (Delta | FloorNormal) < 0.f && (GetGravitySpaceZ(FloorNormal) < 1.f - UE_DELTA);
 				if (bFloorOpposedToMovement)
 				{
+					// Movement opposes the floor normal: replace the hit normal with the floor normal.
 					Normal = FloorNormal;
 				}
 				
-				Normal = ProjectToGravityFloor(Normal).GetSafeNormal();
+				const bool bProjectToFloor = (SlideFixMode == 0) || (SlideFixMode == 1 && !bFloorOpposedToMovement);
+				if (bProjectToFloor)
+				{
+					Normal = ProjectToGravityFloor(Normal).GetSafeNormal();
+				}
 			}
 		}
 	}
@@ -1536,21 +1578,76 @@ float UGeCharacterMovementComponent::SlideAlongSurface(const FVector& Delta, flo
 			const bool bForward   = (SlideDelta | Delta) > 0.f;
 
 			// Debug information
-			{
-				const FVector NewHitNormal = Hit.Normal;
-				const FString NewWallActor = GetNameSafe(Hit.GetActor());
-				const float CosAngle = FMath::Clamp(OldHitNormal | NewHitNormal, -1.f, 1.f);
-				const float AngleDeg = FMath::RadiansToDegrees(FMath::Acos(CosAngle));
-				UE_LOG_ENHANCED(LogGeCharacterMovement, Verbose, this,
-						TEXT("%hs Angle=%.2f°, OldHitNormal=%s, NewHitNormal=%s, SlideDelta=%s, bNearlyZero=%d, bForward=%d"),
-						__FUNCTION__, AngleDeg, *OldHitNormal.ToCompactString(), *NewHitNormal.ToCompactString(), *SlideDelta.ToCompactString(), bNearlyZero, bForward);
+			const FVector NewHitNormal = Hit.Normal;
+			const FString NewWallActor = GetNameSafe(Hit.GetActor());
+			const float CosAngle = FMath::Clamp(OldHitNormal | NewHitNormal, -1.f, 1.f);
+			const float AngleDeg = FMath::RadiansToDegrees(FMath::Acos(CosAngle));
+			UE_LOG_ENHANCED(LogGeCharacterMovement, Verbose, this, TEXT("%hs Mode=%d, Angle=%.2f°, OldHitNormal=%s, NewHitNormal=%s, SlideDelta=%s, bNearlyZero=%d, bForward=%d"),
+					__FUNCTION__, SlideFixMode, AngleDeg, *OldHitNormal.ToCompactString(), *NewHitNormal.ToCompactString(), *SlideDelta.ToCompactString(), bNearlyZero, bForward);
 			
-				const FVector Start = UpdatedComponent->GetComponentLocation();
-				DrawDebugDirectionalArrow(GetWorld(), Start, Start + NewHitNormal * 30.f, 4.0f, FColor::Red, false, 10.0f);
-				DrawDebugDirectionalArrow(GetWorld(), Start, Start + OldHitNormal * 30.f, 4.0f, FColor::Green, false, 10.0f);
-				DrawDebugDirectionalArrow(GetWorld(), Start, Start + Delta.GetSafeNormal() * 30.f, 4.0f, FColor::Blue, false, 10.0f);
-				DrawDebugDirectionalArrow(GetWorld(), Start, Start + SlideDelta.GetSafeNormal() * 30.f, 4.0f, FColor::Yellow, false, 10.0f);
+			if (GeCharacterMovementCVars::SlideMode_UsesTwoWall(SlideFixMode))
+			{
+				const bool bConcaveCorner = OldHitNormal.Z != 0.f && NewHitNormal.Z != 1.f && (OldHitNormal | NewHitNormal) < 0.f;
+				UE_LOG_ENHANCED(LogGeCharacterMovement, Verbose, this, TEXT("%hs [Mode3] ConcaveCornerCheck: OldNormal=%s, NewNormal=%s, Dot=%.3f, bConcave=%d"),
+					__FUNCTION__, *OldHitNormal.ToCompactString(), *NewHitNormal.ToCompactString(), (OldHitNormal | NewHitNormal), bConcaveCorner);
+				if (bConcaveCorner)
+				{
+					// Step 1: Blend normals and cross-product into an initial slide direction.
+					// The cross-product gives the shared edge direction; adding both normals
+					// biases the result toward the angle bisector.
+					FVector NewDir = (NewHitNormal ^ OldHitNormal);
+					NewDir = NewHitNormal + OldHitNormal + NewDir;
+					UE_LOG_ENHANCED(LogGeCharacterMovement, Verbose, this, TEXT("%hs [Mode3] Step1 BlendDir=%s"), __FUNCTION__, *NewDir.ToCompactString());
+
+					// Step 2: Prevent the slide direction from opposing the original movement.
+					if ((NewDir | Delta) <= 0.f)
+					{
+						// Expected direction: Delta projected onto the floor plane.
+						FVector ExpectDir = FVector::VectorPlaneProject(Delta, OldHitNormal);
+						// Pick whichever ±89° rotation around the wall normal aligns better
+						// with the expected direction.
+						FVector LeftDir  = Delta.RotateAngleAxis(-89.f, NewHitNormal);
+						FVector RightDir = Delta.RotateAngleAxis( 89.f, NewHitNormal);
+						const bool bPickLeft = (ExpectDir | LeftDir) > 0.f;
+						NewDir = bPickLeft ? LeftDir : RightDir;
+						UE_LOG_ENHANCED(LogGeCharacterMovement, Verbose, this, TEXT("%hs [Mode3] Step2 Opposed->Rotate: ExpectDir=%s, PickLeft=%d, NewDir=%s"),
+							__FUNCTION__, *ExpectDir.ToCompactString(), bPickLeft, *NewDir.ToCompactString());
+					}
+
+					// Step 3: Project onto the wall plane to ensure the character slides
+					// flush against the wall surface.
+					const FVector PreProjectDir = NewDir;
+					NewDir = FVector::VectorPlaneProject(NewDir, NewHitNormal).GetSafeNormal();
+					UE_LOG_ENHANCED(LogGeCharacterMovement, Verbose, this, TEXT("%hs [Mode3] Step3 ProjectToWall: %s -> %s"),
+						__FUNCTION__, *PreProjectDir.ToCompactString(), *NewDir.ToCompactString());
+
+					// Step 4: Restore speed via horizontal-speed conservation.
+					// New direction is nearly vertical (edge case): fall back to projection.
+					float SlideSpeed = FMath::Abs(Delta | NewDir);
+					
+					// Using Delta's raw length would cause a speed drop when the projection
+					// angle deviates. Instead: SlideSpeed = horizontal_speed / horizontal_ratio.
+					const FVector DeltaHorizontal  = FVector(Delta.X,  Delta.Y,  0.f);
+					const FVector NewDirHorizontal = FVector(NewDir.X, NewDir.Y, 0.f);
+					const float   NewDirHorizSize  = NewDirHorizontal.Size();
+					if (NewDirHorizSize > UE_KINDA_SMALL_NUMBER && GeCharacterMovementCVars::SlideMode_PreservesHorizSpeed(SlideFixMode))
+					{
+						// New direction has a horizontal component: preserve horizontal speed.
+						SlideSpeed = DeltaHorizontal.Size() / NewDirHorizSize;
+					}
+					
+					const FVector OldSlideDelta = SlideDelta;
+					SlideDelta = SlideSpeed * (1.f - Hit.Time) * NewDir;
+					UE_LOG_ENHANCED(LogGeCharacterMovement, Verbose, this, TEXT("%hs [Mode3] Step4 SlideDelta: %s -> %s (Speed=%.2f, HorizSize=%.4f, HitTime=%.3f)"),
+						__FUNCTION__, *OldSlideDelta.ToCompactString(), *SlideDelta.ToCompactString(), SlideSpeed, NewDirHorizSize, Hit.Time);
+				}
 			}
+			
+			// const FVector Start = UpdatedComponent->GetComponentLocation();
+			// DrawDebugDirectionalArrow(GetWorld(), Start, Start + NewHitNormal * 30.f, 4.0f, FColor::Red, false, 10.0f);
+			// DrawDebugDirectionalArrow(GetWorld(), Start, Start + OldHitNormal * 30.f, 4.0f, FColor::Green, false, 10.0f);
+			// DrawDebugDirectionalArrow(GetWorld(), Start, Start + Delta.GetSafeNormal() * 30.f, 4.0f, FColor::Blue, false, 10.0f);
+			// DrawDebugDirectionalArrow(GetWorld(), Start, Start + SlideDelta.GetSafeNormal() * 30.f, 4.0f, FColor::Yellow, false, 10.0f);
 			
 			// Only proceed if the new direction is of significant length and not in reverse of original attempted move.
 			if (!bNearlyZero && bForward)
