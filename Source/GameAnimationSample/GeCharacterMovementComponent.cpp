@@ -1587,7 +1587,7 @@ float UGeCharacterMovementComponent::SlideAlongSurface(const FVector& Delta, flo
 			
 			if (GeCharacterMovementCVars::SlideMode_UsesTwoWall(SlideFixMode))
 			{
-				const bool bConcaveCorner = OldHitNormal.Z != 0.f && NewHitNormal.Z != 1.f && (OldHitNormal | NewHitNormal) < 0.f;
+				const bool bConcaveCorner = OldHitNormal.Z != 0.f && NewHitNormal.Z != 1.f && (OldHitNormal | NewHitNormal) < -KINDA_SMALL_NUMBER;
 				UE_LOG_ENHANCED(LogGeCharacterMovement, Verbose, this, TEXT("%hs [Mode3] ConcaveCornerCheck: OldNormal=%s, NewNormal=%s, Dot=%.3f, bConcave=%d"),
 					__FUNCTION__, *OldHitNormal.ToCompactString(), *NewHitNormal.ToCompactString(), (OldHitNormal | NewHitNormal), bConcaveCorner);
 				if (bConcaveCorner)
