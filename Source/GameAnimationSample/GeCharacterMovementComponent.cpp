@@ -661,8 +661,8 @@ bool UGeCharacterMovementComponent::SetCapsuleStage(EJumpCapsuleStage NewCapsule
     const bool bIsSimulatedProxy = (CharacterOwner->GetLocalRole() == ROLE_SimulatedProxy);
     if (!bIsSimulatedProxy)
     {
-	    UE_LOG_GATED(GDisplayLogCapsule, LogGeCharacterMovement, Verbose, this,
-		    TEXT("[DynamicCapsule] %hs CollisionCheck: PawnLocation=%s, ProposedLocation=%s, ScaledTotalZDelta=%.4f"),
+	    UE_LOG_GATED(GDisplayLogCapsule, LogGeCharacterMovement, Log, this,
+	    	TEXT("[DynamicCapsule] %hs CollisionCheck: PawnLocation=%s, ProposedLocation=%s, ScaledTotalZDelta=%.4f"),
 		    __FUNCTION__, *PawnLocation.ToCompactString(), *ProposedLocation.ToCompactString(), ScaledTotalZDelta);
 	    
 	    constexpr float SweepInflation = UE_KINDA_SMALL_NUMBER * 10.f; // Preventing precision error
@@ -670,7 +670,10 @@ bool UGeCharacterMovementComponent::SetCapsuleStage(EJumpCapsuleStage NewCapsule
     	// Use current capsule for Sweeping
     	const ECollisionChannel CollisionChannel = UpdatedComponent->GetCollisionObjectType();
     	const FCollisionShape CurrentCapsuleShape = Capsule->GetCollisionShape();
-    	const FCollisionShape TargetCapsuleShape = FCollisionShape::MakeCapsule(CurrentCapsuleShape.GetCapsuleRadius(), NewHalfHeight + SweepInflation);
+    	// Shrink radius by SWEEP_EDGE_REJECT_DISTANCE to ignore edge-grazing lateral walls
+    	const float ShrunkRadius = FMath::Max(0.f, CurrentCapsuleShape.GetCapsuleRadius() - SWEEP_EDGE_REJECT_DISTANCE);
+    	const FCollisionShape SweepCapsuleShape = FCollisionShape::MakeCapsule(ShrunkRadius, CurrentCapsuleShape.GetCapsuleHalfHeight());
+    	const FCollisionShape TargetCapsuleShape = FCollisionShape::MakeCapsule(ShrunkRadius, ScaledNewHalfHeight);
     	
 	    FCollisionQueryParams CapsuleParams(SCENE_QUERY_STAT(DynamicCapsuleTrace), false, CharacterOwner);
 	    FCollisionResponseParams ResponseParam;
@@ -685,13 +688,13 @@ bool UGeCharacterMovementComponent::SetCapsuleStage(EJumpCapsuleStage NewCapsule
 		    FHitResult FloorHit;
 		    FVector Start = PawnLocation;
 		    FVector End = Start - FVector(0.f, 0.f, BottomDropDist + SweepInflation);
-		    const bool bHitResult = MyWorld->SweepSingleByChannel(FloorHit, Start, End, FQuat::Identity, CollisionChannel, CurrentCapsuleShape, CapsuleParams, ResponseParam);
+		    const bool bHitResult = MyWorld->SweepSingleByChannel(FloorHit, Start, End, FQuat::Identity, CollisionChannel, SweepCapsuleShape, CapsuleParams, ResponseParam);
 
 #if ENABLE_DRAW_DEBUG
 		    if (CVarAnimSkillMovement_DebugStanceCollision.GetValueOnAnyThread() > 0)
 		    {
-			    DrawDebugCapsuleTraceSingle(MyWorld, Start, End, CurrentCapsuleShape.GetCapsuleRadius(), CurrentCapsuleShape.GetCapsuleHalfHeight(),
-			    	EDrawDebugTrace::Type::ForDuration, bHitResult, FloorHit, FLinearColor::Green, FLinearColor::Red, 3.f);
+		    	DrawDebugCapsuleTraceSingle(MyWorld, Start, End, SweepCapsuleShape.GetCapsuleRadius(), SweepCapsuleShape.GetCapsuleHalfHeight(),
+		    		EDrawDebugTrace::Type::ForDuration, bHitResult, FloorHit, FLinearColor::Green, FLinearColor::Red, 3.f);
 		    }
 #endif
 
@@ -699,27 +702,27 @@ bool UGeCharacterMovementComponent::SetCapsuleStage(EJumpCapsuleStage NewCapsule
 		    {
 		    	// Adjust proposed location to avoid floor collision
 			    ProposedLocation.Z = FloorHit.Location.Z - ScaledHalfHeightAdjust + MAX_FLOOR_DIST;
-		    	UE_LOG_GATED(GDisplayLogCapsule, LogGeCharacterMovement, Error, this, TEXT("[DynamicCapsule] %hs Floor Hit! Adjusted ProposedLocation=%s, HitLocation=%s, BottomDropDist=%.4f"), 
-			    	__FUNCTION__, *ProposedLocation.ToCompactString(), *FloorHit.Location.ToCompactString(), BottomDropDist);
+		    	UE_LOG_GATED(GDisplayLogCapsule, LogGeCharacterMovement, Error, this, TEXT("[DynamicCapsule] %hs Floor Hit! Adjusted ProposedLocation=%s, ImpactPoint=%s, BottomDropDist=%.4f, HitActor=%s, HitComponent=%s"), 
+			    	__FUNCTION__, *ProposedLocation.ToCompactString(), *FloorHit.ImpactPoint.ToCompactString(), BottomDropDist, *GetNameSafe(FloorHit.GetActor()), *GetNameSafe(FloorHit.GetComponent()));
 		    }
 	    }
 
     	// Check for ceiling collision when moving capsule upwards
-	    const float CurrentToZ = PawnLocation.Z + ScaledOldHalfHeight;
+	    const float CurrentTopZAtProposed = ProposedLocation.Z + ScaledOldHalfHeight;
 	    const float ProposedTopZ = ProposedLocation.Z + ScaledNewHalfHeight;
-	    const float TopLiftDist = ProposedTopZ - CurrentToZ;
+	    const float TopLiftDist = ProposedTopZ - CurrentTopZAtProposed;
 	    if (TopLiftDist > KINDA_SMALL_NUMBER)
 	    {
 		    FHitResult CeilingHit;
-		    FVector Start = PawnLocation;
+		    FVector Start = ProposedLocation;
 		    FVector End = Start + FVector(0.f, 0.f, TopLiftDist + SweepInflation);
-		    const bool bHitResult = MyWorld->SweepSingleByChannel(CeilingHit, Start, End, FQuat::Identity, CollisionChannel, CurrentCapsuleShape, CapsuleParams, ResponseParam);
+		    const bool bHitResult = MyWorld->SweepSingleByChannel(CeilingHit, Start, End, FQuat::Identity, CollisionChannel, SweepCapsuleShape, CapsuleParams, ResponseParam);
 
 #if ENABLE_DRAW_DEBUG
 		    if (CVarAnimSkillMovement_DebugStanceCollision.GetValueOnAnyThread() > 0)
 		    {
-			    DrawDebugCapsuleTraceSingle(MyWorld, Start, End, CurrentCapsuleShape.GetCapsuleRadius(), CurrentCapsuleShape.GetCapsuleHalfHeight(),
-			    	EDrawDebugTrace::Type::ForDuration, bHitResult, CeilingHit, FLinearColor::Green, FLinearColor::Red, 3.f);
+		    	DrawDebugCapsuleTraceSingle(MyWorld, Start, End, SweepCapsuleShape.GetCapsuleRadius(), SweepCapsuleShape.GetCapsuleHalfHeight(),
+		    		EDrawDebugTrace::Type::ForDuration, bHitResult, CeilingHit, FLinearColor::Green, FLinearColor::Red, 3.f);
 		    }
 #endif
 
@@ -727,8 +730,8 @@ bool UGeCharacterMovementComponent::SetCapsuleStage(EJumpCapsuleStage NewCapsule
 		    {
 		    	// Adjust proposed location to avoid ceiling collision
 			    ProposedLocation.Z = CeilingHit.Location.Z + ScaledHalfHeightAdjust - MAX_FLOOR_DIST;
-			    UE_LOG_GATED(GDisplayLogCapsule, LogGeCharacterMovement, Error, this, TEXT("[DynamicCapsule] %hs CeilingHit Hit! Adjusted ProposedLocation=%s, HitLocation=%s, TopLiftDist=%.4f"), 
-				    __FUNCTION__, *ProposedLocation.ToCompactString(), *CeilingHit.Location.ToCompactString(), TopLiftDist);
+			    UE_LOG_GATED(GDisplayLogCapsule, LogGeCharacterMovement, Error, this, TEXT("[DynamicCapsule] %hs CeilingHit Hit! Adjusted ProposedLocation=%s, ImpactPoint=%s, TopLiftDist=%.4f, HitActor=%s, HitComponent=%s"), 
+				    __FUNCTION__, *ProposedLocation.ToCompactString(), *CeilingHit.ImpactPoint.ToCompactString(), TopLiftDist, *GetNameSafe(CeilingHit.GetActor()), *GetNameSafe(CeilingHit.GetComponent()));
 		    }
 	    }
 
