@@ -199,6 +199,10 @@ public:
 	// bRestoreCapsule: true = restore capsule and retry if failed, false = clear data only
 	void InterruptDynamicCapsule(bool bRestoreCapsule);
 	
+	// Check if capsule has been externally modified, interrupt DynamicCapsule if so.
+	// Returns true if external modification detected and interrupted, caller should skip subsequent SetCapsuleStage.
+	bool CheckAndInterruptIfExternallyModified();
+	
 	// Get GameplayTag for the given movement mode
 	// Override this function to provide custom mapping from movement mode to GameplayTag
 	virtual FGameplayTag GetMovementModeTag(EMovementMode InMovementMode, uint8 InCustomMode) const;

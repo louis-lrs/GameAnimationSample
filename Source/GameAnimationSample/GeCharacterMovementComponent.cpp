@@ -491,6 +491,12 @@ void UGeCharacterMovementComponent::OnRep_ServerCapsuleStage()
 	// Apply the stage change, which will handle mesh offset interpolation
 	if (CharacterOwner->GetLocalRole() == ROLE_SimulatedProxy)
 	{
+		// Check if capsule was externally modified, skip this OnRep if so
+		if (CheckAndInterruptIfExternallyModified())
+		{
+			return;
+		}
+		
 		UE_LOG_GATED(GDisplayLogCapsule, LogGeCharacterMovement, Log, this, TEXT("[DynamicCapsule] %hs Received ServerCapsuleStage=%s"), 
 			__FUNCTION__, *UEnum::GetValueAsString(ServerCapsuleStage));
 		SetCapsuleStage(ServerCapsuleStage);
@@ -969,19 +975,9 @@ void UGeCharacterMovementComponent::UpdateDynamicCapsule(float DeltaSeconds)
 	}
 	
 	// Check for external capsule modifications
-	if (ExpectedCapsuleHalfHeight > UE_KINDA_SMALL_NUMBER)
+	if (CheckAndInterruptIfExternallyModified())
 	{
-		UCapsuleComponent* Capsule = CharacterOwner->GetCapsuleComponent();
-		if (Capsule != nullptr)
-		{
-			const float CurrentHalfHeight = Capsule->GetUnscaledCapsuleHalfHeight();
-			if (!FMath::IsNearlyEqual(CurrentHalfHeight, ExpectedCapsuleHalfHeight, 0.01f))
-			{
-				// External modification detected, use clear-only mode
-				InterruptDynamicCapsule(false);
-				return;
-			}
-		}
+		return;
 	}
 	
 	// Handle root motion: use restore mode
@@ -1181,6 +1177,26 @@ void UGeCharacterMovementComponent::InterruptDynamicCapsule(bool bRestoreCapsule
 		TargetMeshZOffset.Reset();
 		UE_LOG_GATED(GDisplayLogCapsule, LogGeCharacterMovement, Log, this, TEXT("[DynamicCapsule] %hs Interrupted and cleared runtime data"), __FUNCTION__);
 	}
+}
+
+bool UGeCharacterMovementComponent::CheckAndInterruptIfExternallyModified()
+{
+	UCapsuleComponent* Capsule = CharacterOwner ? CharacterOwner->GetCapsuleComponent() : nullptr;
+	if (Capsule != nullptr)
+	{
+		const float CurrentHalfHeight = Capsule->GetUnscaledCapsuleHalfHeight();
+		if (!FMath::IsNearlyEqual(CurrentHalfHeight, ExpectedCapsuleHalfHeight, 0.01f))
+		{
+			// External modification detected, interrupt DynamicCapsule and notify caller to skip
+			InterruptDynamicCapsule(false);
+			UE_LOG_GATED(GDisplayLogCapsule, LogGeCharacterMovement, Log, this,
+				TEXT("[DynamicCapsule] %hs External capsule modification detected (Current: %.2f, Expected: %.2f), interrupting"),
+				__FUNCTION__, CurrentHalfHeight, ExpectedCapsuleHalfHeight);
+			return true;
+		}
+	}
+	
+	return false;
 }
 
 FString UGeCharacterMovementComponent::GetDynamicCapsuleDebugInfo() const
