@@ -91,6 +91,82 @@ void AMyActor::HandleQTEFinished(EQTEResult Result, UQTEDataAsset* Asset, FQTERe
 - `BP_On Remaining Time Changed(Remaining Ratio)` — 更新收缩光圈（Tap）
 - `BP_On QTE Finished(Result)` — 播放成功 / 失败动画
 
+## 🎬 CinematicQTEEditor 模块使用详解
+
+`CinematicQTEEditor` 是**纯编辑器模块**（打包时不会被包含），它的职责是：
+- 向 Sequencer 的 `+ Track` 下拉菜单注册 **"QTE Track"** 菜单项
+- 提供 `MovieSceneQTETrack` / `MovieSceneQTESection` 的编辑器交互（拖拽、右键菜单、属性面板）
+
+### 1. 确认模块已加载
+编辑器启动后，打开 `Window → Developer Tools → Modules`，搜索：
+- `CinematicQTE` — 状态应为 **Loaded**
+- `CinematicQTEEditor` — 状态应为 **Loaded**
+
+若 `CinematicQTEEditor` 未加载，通常是 `.uplugin` 中 `"LoadingPhase": "PostEngineInit"` 未生效或编辑器启动时报错，查看 `Output Log` 中 `LogCinematicQTEEditor` 分类。
+
+### 2. 在 Level Sequence 中添加 QTE Track
+
+完整交互流程：
+
+```
+┌─ Content Browser ──────────────────┐
+│ 右键 → Cinematics → Level Sequence │
+│ 命名 LS_CutsceneDemo，双击打开     │
+└────────────────────────────────────┘
+               │
+               ▼
+┌─ Sequencer 面板 ─────────────────────────────┐
+│ 点击左上角 [+ Track ▾]                       │
+│   ├─ Folder                                  │
+│   ├─ Actor To Sequencer                      │
+│   ├─ Camera Cut Track                        │
+│   ├─ ...（引擎内置）                         │
+│   └─ QTE Track              ← CinematicQTEEditor 注入的入口 │
+└──────────────────────────────────────────────┘
+               │ 点击
+               ▼
+   时间轴新增一条红棕色 "QTE Track"
+               │
+               ▼
+┌─ 在 Track 行上右键 ─────────────────┐
+│   → Add Section                      │
+│   （或长按拖动指定时间范围）         │
+└──────────────────────────────────────┘
+               │
+               ▼
+   生成 QTE Section（默认长度 = DataAsset.Duration）
+               │ 选中 Section
+               ▼
+┌─ Details 面板 ──────────────────────────┐
+│ ▼ QTE                                  │
+│   QTE Data Asset     [DA_MashQTE_Demo]│ ← 必填
+│   Conflict Policy    [Ignore ▼]        │
+└────────────────────────────────────────┘
+```
+
+### 3. Section 属性说明
+
+| 属性 | 类型 | 说明 |
+|---|---|---|
+| `QTE Data Asset` | `UQTEDataAsset*` | 必填。指向 `MashQTEDataAsset` / `TapQTEDataAsset` 或自定义派生资产 |
+| `Conflict Policy` | `EQTEConflictPolicy` | `Ignore` 丢弃、`Queue` 排队、`Replace` 抢占当前 QTE |
+| Section 起始帧 | Sequencer 原生 | 触发 QTE 的时间点；Section 长度无实际作用（QTE 时长由 DataAsset.Duration 决定） |
+
+### 4. 多个 QTE 编排建议
+
+- **串行**：多个 Section 首尾相接，每个 Section 绑定不同 DataAsset
+- **并行**（不推荐）：时间轴上重叠的 Section 会按 Conflict Policy 处理，实测容易出现 UI 抖动，请尽量避免
+- **分支预留**：对于"成功 → A 剧情、失败 → B 剧情"的分支，不要在 Sequencer 里写分支；在 Level Blueprint 监听 `OnGlobalQTEFinished`，用 `PlayTo` / `JumpTo` 跳转不同 Sequence
+
+### 5. PIE 调试
+1. 场景中拖入 `Level Sequence Actor` 并指定你的 Sequence
+2. 勾选 `Auto Play` 或者在 BeginPlay 中手动 `Play()`
+3. PIE 运行，到达 Section 起始时间点：
+   - 看到 `PlayRate` 从 1.0 插值到 0.01
+   - UI Widget 创建在 Viewport 上
+   - `InputMappingContext` 被压入 `EnhancedInputLocalPlayerSubsystem`
+4. QTE 结束后 PlayRate 插值回 1.0，UI 销毁，IMC 弹出
+
 ## 🎮 运行时 API
 
 ```cpp
@@ -121,12 +197,121 @@ Sub->GetCurrentPlayRate();
 3. 重写 `UQTETaskBase::OnStartQTE / OnTickQTE / OnHandleInput / OnFinishQTE`
 4. 在派生任务中调用 `BroadcastProgress / BroadcastRemaining / FinishQTE` 管理状态
 
-## 🧪 运行测试
+## 🧪 CinematicQTETests 模块使用详解
 
-编辑器菜单 → `Tools > Session Frontend > Automation`，勾选 `CinematicQTE.*` 分类执行：
-- `CinematicQTE.Mash.*` — 连点 QTE 状态机
-- `CinematicQTE.Tap.*` — 单点 QTE 状态机
-- `CinematicQTE.PlayRate.*` — 速率控制器插值
+`CinematicQTETests` 是 **DeveloperTool** 类型模块，只在 `Development Editor` / `DebugGame Editor` 下加载，打包版本不包含。它提供 9 个自动化测试用例，覆盖连点 / 单点 / 速率控制三类核心状态机。
+
+### 1. 测试用例清单
+
+| 命令空间 / 测试路径 | 对应源文件 | 断言目标 |
+|---|---|---|
+| `CinematicQTE.Mash.SuccessByReachingTarget` | `QTETask.spec.cpp` | 连按达到 `RequiredPressCount` 即判定 Success |
+| `CinematicQTE.Mash.RejectPressWithinMinInterval` | 同上 | 小于 `MinPressInterval` 的抖动按键被忽略 |
+| `CinematicQTE.Mash.TimeoutWhenProgressNotReached` | 同上 | `Duration` 到期但进度不足 → Timeout |
+| `CinematicQTE.Tap.SuccessInPerfectWindow` | `QTETask.spec.cpp` | 在 `[PerfectWindowStart, PerfectWindowEnd]` 内按键 → Success |
+| `CinematicQTE.Tap.FailOutsideWindow` | 同上 | 窗口外按键 → Failure，并立即结束 |
+| `CinematicQTE.Tap.TimeoutWhenNoInput` | 同上 | 整段无输入 → Timeout |
+| `CinematicQTE.PlayRate.ImmediateSnapWhenBlendTimeZero` | `PlayRateController.spec.cpp` | `BlendTime=0` 时当帧直接切换到目标速率 |
+| `CinematicQTE.PlayRate.BlendProgressesOverTime` | 同上 | 每帧 `Tick` 速率按曲线单调逼近目标 |
+| `CinematicQTE.PlayRate.InterruptedBlendStartsFromCurrent` | 同上 | 混合中途发起新 blend，起点 = 当前插值中的速率 |
+
+### 2. 运行方式 A：编辑器 UI
+
+1. 菜单 `Tools → Test Automation`（UE 5.5 入口）或 `Tools → Session Frontend → Automation` 标签页
+2. 左侧测试树展开 `CinematicQTE` 节点，勾选想跑的子节点
+3. 点击右上角 **Start Tests**
+4. 实时查看每条用例的 PASS / FAIL，失败时下方日志会打印断言位置
+
+![automation-panel 示意]
+```
+☑ CinematicQTE
+  ☑ Mash
+    ☑ SuccessByReachingTarget        ✅ 12ms
+    ☑ RejectPressWithinMinInterval   ✅ 8ms
+    ☑ TimeoutWhenProgressNotReached  ✅ 16ms
+  ☑ Tap
+    ☑ SuccessInPerfectWindow         ✅ 9ms
+    ☑ FailOutsideWindow              ✅ 7ms
+    ☑ TimeoutWhenNoInput             ✅ 15ms
+  ☑ PlayRate
+    ☑ ImmediateSnapWhenBlendTimeZero ✅ 2ms
+    ☑ BlendProgressesOverTime        ✅ 11ms
+    ☑ InterruptedBlendStartsFromCurrent ✅ 6ms
+```
+
+### 3. 运行方式 B：编辑器控制台命令
+
+在主视口按 `` ` `` 打开控制台：
+
+```
+Automation RunTests CinematicQTE                              # 跑全部 9 条
+Automation RunTests CinematicQTE.Mash                         # 仅连点组
+Automation RunTests CinematicQTE.Tap.SuccessInPerfectWindow   # 单条用例
+Automation List CinematicQTE                                  # 列出匹配的用例
+```
+
+### 4. 运行方式 C：命令行（CI / 无头）
+
+```bat
+"C:\Program Files\Epic Games\UE_5.5\Engine\Binaries\Win64\UnrealEditor-Cmd.exe" ^
+  "D:\UnrealProject\GameAnimationSample\GameAnimationSample.uproject" ^
+  -ExecCmds="Automation RunTests CinematicQTE; Quit" ^
+  -TestExit="Automation Test Queue Empty" ^
+  -Unattended -NoSound -NullRHI ^
+  -ReportOutputPath="D:\UnrealProject\GameAnimationSample\Saved\AutomationReports"
+```
+
+- 退出码 `0` = 全部通过；非 0 = 至少一条失败
+- 报告位于 `Saved/AutomationReports/index.html`
+- 日志位于 `Saved/Logs/GameAnimationSample.log`，搜索 `LogAutomationController` 查看每条结果
+
+### 5. 编写新测试用例
+
+在 `Plugins/CinematicQTE/Source/CinematicQTETests/Private/` 下新建 `MyCase.spec.cpp`：
+
+```cpp
+#if WITH_DEV_AUTOMATION_TESTS
+#include "Misc/AutomationTest.h"
+#include "QTEDataAsset.h"
+#include "MashQTEDataAsset.h"
+#include "MashQTETask.h"
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FMyMashCustomTest,
+    "CinematicQTE.Mash.MyCustomCase",     // ← UI 中显示的路径
+    EAutomationTestFlags::EditorContext
+  | EAutomationTestFlags::ClientContext
+  | EAutomationTestFlags::EngineFilter)
+
+bool FMyMashCustomTest::RunTest(const FString& Parameters)
+{
+    UMashQTEDataAsset* Data = NewObject<UMashQTEDataAsset>();
+    Data->Duration = 2.0f;
+    Data->RequiredPressCount = 5;
+
+    UMashQTETask* Task = NewObject<UMashQTETask>();
+    Task->Initialize(Data, /*Subsystem=*/nullptr);
+    Task->StartTask();
+
+    for (int32 i = 0; i < 5; ++i)
+    {
+        Task->HandlePress();
+    }
+
+    TestEqual(TEXT("达到目标后应判定为 Success"),
+              (int32)Task->GetResult(), (int32)EQTEResult::Success);
+    return true;
+}
+#endif
+```
+
+重新编译后，新测试会自动出现在 Automation 面板的 `CinematicQTE.Mash.MyCustomCase` 路径下。
+
+### 6. 测试调试技巧
+
+- **只想看失败** ：UI 面板右上角 `Filter Results → Failed Only`
+- **断点调试** ：以 `Development Editor` 配置启动 VS，主视口 `Automation RunTests CinematicQTE.Mash`，可在 `.spec.cpp` 中打断点
+- **Flaky 排查** ：`Automation SetMinimumPriority Medium` 后批量跑 N 次，UE 会统计通过率
 
 ## 📐 架构概览
 
