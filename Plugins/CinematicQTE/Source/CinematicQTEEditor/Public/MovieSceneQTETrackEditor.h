@@ -26,8 +26,10 @@ public:
 	// ====== ISequencerTrackEditor ======
 	virtual bool SupportsType(TSubclassOf<UMovieSceneTrack> TrackClass) const override;
 	virtual void BuildAddTrackMenu(FMenuBuilder& MenuBuilder) override;
+	virtual void BuildTrackContextMenu(FMenuBuilder& MenuBuilder, UMovieSceneTrack* Track) override;
 	virtual const FSlateBrush* GetIconBrush() const override;
 
 private:
 	void HandleAddQTETrack();
+	void HandleAddQTESection(UMovieSceneTrack* Track);
 };
