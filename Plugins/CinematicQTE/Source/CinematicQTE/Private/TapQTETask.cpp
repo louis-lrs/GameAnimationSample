@@ -12,10 +12,10 @@ UTapQTETask::UTapQTETask()
 void UTapQTETask::OnStartQTE()
 {
 	TapData = Cast<UTapQTEDataAsset>(DataAsset);
-	if (!TapData)
+	if (!ensureAlwaysMsgf(TapData != nullptr,
+		TEXT("TapQTETask requires UTapQTEDataAsset, got %s. Check DataAsset.TaskClass."),
+		DataAsset ? *DataAsset->GetClass()->GetName() : TEXT("null")))
 	{
-		UE_LOG(LogCinematicQTE, Error, TEXT("TapQTETask requires UTapQTEDataAsset, got %s"),
-			DataAsset ? *DataAsset->GetClass()->GetName() : TEXT("null"));
 		FinishQTE(EQTEResult::Cancelled);
 		return;
 	}

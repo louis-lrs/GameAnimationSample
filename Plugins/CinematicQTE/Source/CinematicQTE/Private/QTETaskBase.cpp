@@ -12,16 +12,16 @@ UQTETaskBase::UQTETaskBase()
 
 void UQTETaskBase::StartQTE(UWorld* InWorld, APlayerController* InPC, UQTEDataAsset* InDataAsset)
 {
-	if (TaskState != EQTETaskState::Idle)
+	if (!ensureAlwaysMsgf(TaskState == EQTETaskState::Idle,
+		TEXT("QTETask[%s] StartQTE called on non-Idle task (state=%d). Caller must Finish/Cancel previous task first."),
+		*GetName(), (int32)TaskState))
 	{
-		UE_LOG(LogCinematicQTE, Warning, TEXT("QTETask[%s] StartQTE called on non-Idle task (state=%d)"),
-			*GetName(), (int32)TaskState);
 		return;
 	}
 
-	if (!IsValid(InDataAsset))
+	if (!ensureAlwaysMsgf(IsValid(InDataAsset),
+		TEXT("QTETask[%s] StartQTE: DataAsset is null."), *GetName()))
 	{
-		UE_LOG(LogCinematicQTE, Error, TEXT("QTETask[%s] StartQTE: DataAsset is null."), *GetName());
 		return;
 	}
 

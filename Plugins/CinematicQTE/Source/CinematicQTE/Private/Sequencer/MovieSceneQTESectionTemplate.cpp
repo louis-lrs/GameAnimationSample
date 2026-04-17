@@ -34,9 +34,15 @@ namespace
 			UCinematicQTESubsystem* Sub = World->GetSubsystem<UCinematicQTESubsystem>();
 			if (!Sub) return;
 
-			// 尝试将 Player 当成 ULevelSequencePlayer（常见情况）
-			ULevelSequencePlayer* SeqPlayer = Cast<ULevelSequencePlayer>(PlaybackContext);
-			// 若 PlaybackContext 不是 Player 本身，则从 GetEvaluationState 等途径获取失败时传 nullptr
+			// 通过 IMovieScenePlayer::AsUObject() 拿到真正的 Player 实例。
+			// 注意：GetPlaybackContext() 返回的是 ALevelSequenceActor 或 UWorld，永远不是 Player 本身，
+			// 这里必须用 AsUObject()，否则 SlowMotion 的 SetPlayRate 永远不会生效。
+			ULevelSequencePlayer* SeqPlayer = Cast<ULevelSequencePlayer>(Player.AsUObject());
+			ensureAlwaysMsgf(SeqPlayer != nullptr,
+				TEXT("CinematicQTE: failed to resolve ULevelSequencePlayer from IMovieScenePlayer (Asset=%s). ")
+				TEXT("Slow-motion will NOT be applied."),
+				*DataAsset->GetName());
+
 			Sub->StartQTE(DataAsset, SeqPlayer, static_cast<EQTEConflictPolicy>(ConflictPolicy));
 
 			UE_LOG(LogCinematicQTE, Log, TEXT("Sequencer QTE fired: Asset=%s"), *DataAsset->GetName());

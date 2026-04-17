@@ -58,6 +58,8 @@ private:
 	float BlendElapsed = 0.f;
 	bool bBlending = false;
 	bool bPaused = false;
+	/** SetPlayer 设置过有效 Player；用于检测 Player 中途失效（被 GC / Sequence 停止）并只告警一次 */
+	bool bHasValidPlayer = false;
 
 	void ApplyRate(float Rate);
 };

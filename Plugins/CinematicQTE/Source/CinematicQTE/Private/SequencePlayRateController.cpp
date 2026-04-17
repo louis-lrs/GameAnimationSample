@@ -18,6 +18,11 @@ void FSequencePlayRateController::SetPlayer(ULevelSequencePlayer* InPlayer)
 		TargetRate = CurrentRate;
 		StartRate = CurrentRate;
 		bBlending = false;
+		bHasValidPlayer = true;
+	}
+	else
+	{
+		bHasValidPlayer = false;
 	}
 }
 
@@ -25,6 +30,7 @@ void FSequencePlayRateController::ClearPlayer()
 {
 	PlayerRef.Reset();
 	bBlending = false;
+	bHasValidPlayer = false;
 }
 
 void FSequencePlayRateController::RequestBlendTo(float InTargetRate, float BlendTime, UCurveFloat* Curve /*= nullptr*/)
@@ -103,10 +109,15 @@ void FSequencePlayRateController::ApplyRate(float Rate)
 	if (ULevelSequencePlayer* Player = PlayerRef.Get())
 	{
 		Player->SetPlayRate(Rate);
+		return;
 	}
-	else
+
+	if (bHasValidPlayer)
 	{
-		// 静默跳过，由调用方统一监控
-		UE_LOG(LogCinematicQTE, VeryVerbose, TEXT("PlayRateController: player invalid, skip SetPlayRate(%.3f)"), Rate);
+		bHasValidPlayer = false; // 只告警一次，避免每帧刷屏
+		ensureAlwaysMsgf(false,
+			TEXT("PlayRateController: ULevelSequencePlayer became invalid mid-blend while applying rate %.3f. ")
+			TEXT("Sequence was likely stopped/GC'd while QTE still active. Slow-motion has silently failed."),
+			Rate);
 	}
 }

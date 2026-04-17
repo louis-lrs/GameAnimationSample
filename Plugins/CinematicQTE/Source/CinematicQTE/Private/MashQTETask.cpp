@@ -12,10 +12,10 @@ UMashQTETask::UMashQTETask()
 void UMashQTETask::OnStartQTE()
 {
 	MashData = Cast<UMashQTEDataAsset>(DataAsset);
-	if (!MashData)
+	if (!ensureAlwaysMsgf(MashData != nullptr,
+		TEXT("MashQTETask requires UMashQTEDataAsset, got %s. Check DataAsset.TaskClass."),
+		DataAsset ? *DataAsset->GetClass()->GetName() : TEXT("null")))
 	{
-		UE_LOG(LogCinematicQTE, Error, TEXT("MashQTETask requires UMashQTEDataAsset, got %s"),
-			DataAsset ? *DataAsset->GetClass()->GetName() : TEXT("null"));
 		FinishQTE(EQTEResult::Cancelled);
 		return;
 	}

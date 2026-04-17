@@ -39,7 +39,7 @@ bool UCinematicQTESubsystem::ShouldCreateSubsystem(UObject* Outer) const
 void UCinematicQTESubsystem::Initialize(FSubsystemCollectionBase& Collection)
 {
 	Super::Initialize(Collection);
-	UE_LOG(LogCinematicQTE, Log, TEXT("CinematicQTESubsystem initialized."));
+	UE_LOG(LogCinematicQTE, Verbose, TEXT("CinematicQTESubsystem initialized."));
 }
 
 void UCinematicQTESubsystem::Deinitialize()
@@ -57,7 +57,7 @@ void UCinematicQTESubsystem::Deinitialize()
 	}
 
 	Super::Deinitialize();
-	UE_LOG(LogCinematicQTE, Log, TEXT("CinematicQTESubsystem deinitialized."));
+	UE_LOG(LogCinematicQTE, Verbose, TEXT("CinematicQTESubsystem deinitialized."));
 }
 
 // ============================================================================
@@ -132,9 +132,8 @@ UCinematicQTESubsystem* UCinematicQTESubsystem::Get(const UObject* WorldContext)
 bool UCinematicQTESubsystem::StartQTE(UQTEDataAsset* InDataAsset, ULevelSequencePlayer* InPlayer,
 	EQTEConflictPolicy InConflictPolicy /*= EQTEConflictPolicy::Ignore*/)
 {
-	if (!IsValid(InDataAsset))
+	if (!ensureMsgf(IsValid(InDataAsset), TEXT("StartQTE called with null/invalid DataAsset.")))
 	{
-		UE_LOG(LogCinematicQTE, Warning, TEXT("StartQTE: DataAsset is null."));
 		return false;
 	}
 
@@ -191,7 +190,9 @@ bool UCinematicQTESubsystem::StartQTE(UQTEDataAsset* InDataAsset, ULevelSequence
 	}
 	else
 	{
-		UE_LOG(LogCinematicQTE, Warning, TEXT("StartQTE: SequencePlayer is null; skip play rate control."));
+		ensureAlwaysMsgf(false,
+			TEXT("StartQTE[%s]: SequencePlayer is null; slow-motion will NOT be applied."),
+			*InDataAsset->GetName());
 	}
 
 	// UI
