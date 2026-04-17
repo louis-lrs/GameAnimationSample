@@ -146,9 +146,19 @@ Canvas Panel（根）
 | `BP On QTE Started (DataAsset)` | `TipText → SetText(DataAsset.DisplayText)` |
 | `BP On Progress Changed (Progress)` | `ProgressBar → SetPercent(Progress)` |
 | `BP On Remaining Time Changed (RemainingRatio)` | `ProgressBar → SetPercent(RemainingRatio)`（Tap 用） |
+| `BP On Perfect Window Info (bHasPerfectWindow, WindowStart, WindowEnd)` | Tap 类型下用来绘制"完美窗口高亮区"，见下方说明 |
 | `BP On QTE Finished (Result)` | Branch on Result，给 `ResultText` 设 `Success!` / `Failed` / `Timeout` |
 
 最简版本只绑 `Progress Changed` + `QTE Finished` 也可以。编译 + 保存。
+
+> 💡 **完美窗口可视化（推荐给 Tap 类 QTE）**
+> `BP_OnPerfectWindowInfo` 在 QTE 启动时触发一次，参数含义：
+> - `bHasPerfectWindow`：当前 DataAsset 是否是启用了完美窗口的 Tap 类型
+> - `WindowStart / WindowEnd`：窗口相对 Duration 的比例，0~1
+>
+> 典型做法：在进度条上叠一个 `Image`，锚定父 ProgressBar，X 偏移 = `Width * WindowStart`，Width = `Width * (WindowEnd - WindowStart)`，让玩家一眼看到"绿色安全区"在哪。非 Tap 类型时把该 Image `SetVisibility(Collapsed)`。
+>
+> 这三个值同时也以 `BlueprintReadOnly` 属性形式挂在基类（`bHasPerfectWindow / PerfectWindowStart / PerfectWindowEnd`），可在任意节点里直接 Get，不必依赖事件时序。
 
 ### 4.3 回头填入 DataAsset
 
@@ -206,7 +216,7 @@ Canvas Panel（根）
 3. **在 QTE Track 行上右键 → `QTE → Add QTE Section`**
 4. 生成的 Section 起点在 2s，选中它，在右侧 Details：
    - `QTE → QTE Data Asset` = `DA_QTE_Mash_Demo`
-   - `QTE → Conflict Policy` = `0`（Ignore）
+   - `QTE → Conflict Policy` = `Ignore`
 
 ### 6.4 ⭐ 添加第 2 个 QTE（Tap，触发时间 = 7s）
 

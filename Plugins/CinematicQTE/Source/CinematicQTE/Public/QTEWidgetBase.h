@@ -40,6 +40,9 @@ public:
 	UFUNCTION(BlueprintImplementableEvent, Category = "QTE", meta = (DisplayName = "On Remaining Time Changed"))
 	void BP_OnRemainingTimeChanged(float RemainingRatio);
 
+	UFUNCTION(BlueprintImplementableEvent, Category = "QTE", meta = (DisplayName = "On Perfect Window Info"))
+	void BP_OnPerfectWindowInfo(bool bHasPerfectWindow, float WindowStart, float WindowEnd);
+
 	UFUNCTION(BlueprintImplementableEvent, Category = "QTE", meta = (DisplayName = "On QTE Finished"))
 	void BP_OnQTEFinished(EQTEResult Result);
 
@@ -55,4 +58,16 @@ protected:
 
 	UPROPERTY(BlueprintReadOnly, Transient, Category = "QTE")
 	TObjectPtr<UQTETaskBase> BoundTask = nullptr;
+
+	/** 是否存在完美窗口（非 Tap 类型或未启用时为 false） */
+	UPROPERTY(BlueprintReadOnly, Transient, Category = "QTE|Perfect Window")
+	bool bHasPerfectWindow = false;
+
+	/** 完美窗口起点（相对 Duration 的比例，0~1） */
+	UPROPERTY(BlueprintReadOnly, Transient, Category = "QTE|Perfect Window")
+	float PerfectWindowStart = 0.f;
+
+	/** 完美窗口终点（相对 Duration 的比例，0~1） */
+	UPROPERTY(BlueprintReadOnly, Transient, Category = "QTE|Perfect Window")
+	float PerfectWindowEnd = 0.f;
 };

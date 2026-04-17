@@ -47,5 +47,13 @@ void UTapQTETask::OnHandleInput(const FInputActionValue& Value)
 
 	// 按下即进度满（视觉反馈）
 	BroadcastProgress(1.f);
+
+	if (!bSuccess && TapData->bUsePerfectWindow)
+	{
+		UE_LOG(LogCinematicQTE, Log,
+			TEXT("Tap failed: pressed at ratio %.3f, expected window [%.3f, %.3f]"),
+			Ratio, TapData->PerfectWindowStart, TapData->PerfectWindowEnd);
+	}
+
 	FinishQTE(bSuccess ? EQTEResult::Success : EQTEResult::Failure);
 }

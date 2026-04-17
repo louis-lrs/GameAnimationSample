@@ -15,9 +15,9 @@ namespace
 	struct FQTEExecutionToken : IMovieSceneExecutionToken
 	{
 		TObjectPtr<UQTEDataAsset> DataAsset;
-		uint8 ConflictPolicy;
+		EQTEConflictPolicy ConflictPolicy;
 
-		FQTEExecutionToken(UQTEDataAsset* InAsset, uint8 InPolicy)
+		FQTEExecutionToken(UQTEDataAsset* InAsset, EQTEConflictPolicy InPolicy)
 			: DataAsset(InAsset), ConflictPolicy(InPolicy) {}
 
 		virtual void Execute(const FMovieSceneContext& Context,
@@ -43,7 +43,7 @@ namespace
 				TEXT("Slow-motion will NOT be applied."),
 				*DataAsset->GetName());
 
-			Sub->StartQTE(DataAsset, SeqPlayer, static_cast<EQTEConflictPolicy>(ConflictPolicy));
+			Sub->StartQTE(DataAsset, SeqPlayer, ConflictPolicy);
 
 			UE_LOG(LogCinematicQTE, Log, TEXT("Sequencer QTE fired: Asset=%s"), *DataAsset->GetName());
 		}

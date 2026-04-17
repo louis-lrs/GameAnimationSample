@@ -3,6 +3,7 @@
 #include "QTEWidgetBase.h"
 #include "QTETaskBase.h"
 #include "QTEDataAsset.h"
+#include "TapQTEDataAsset.h"
 
 void UQTEWidgetBase::InitializeFromTask(UQTETaskBase* InTask, UQTEDataAsset* InDataAsset)
 {
@@ -15,6 +16,21 @@ void UQTEWidgetBase::InitializeFromTask(UQTETaskBase* InTask, UQTEDataAsset* InD
 		InTask->OnRemainingTimeChanged.AddDynamic(this, &UQTEWidgetBase::HandleRemainingChanged);
 	}
 
+	// 从 DataAsset 提取完美窗口信息（仅 TapQTEDataAsset 具备）
+	bHasPerfectWindow = false;
+	PerfectWindowStart = 0.f;
+	PerfectWindowEnd = 0.f;
+	if (const UTapQTEDataAsset* TapData = Cast<UTapQTEDataAsset>(InDataAsset))
+	{
+		if (TapData->bUsePerfectWindow)
+		{
+			bHasPerfectWindow = true;
+			PerfectWindowStart = TapData->PerfectWindowStart;
+			PerfectWindowEnd = TapData->PerfectWindowEnd;
+		}
+	}
+
+	BP_OnPerfectWindowInfo(bHasPerfectWindow, PerfectWindowStart, PerfectWindowEnd);
 	BP_OnQTEStarted(InDataAsset);
 }
 

@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "MovieSceneSection.h"
+#include "CinematicQTETypes.h"
 #include "MovieSceneQTESection.generated.h"
 
 class UQTEDataAsset;
@@ -24,7 +25,7 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "QTE")
 	TObjectPtr<UQTEDataAsset> QTEDataAsset = nullptr;
 
-	/** 冲突策略 */
+	/** 冲突策略：触发时若已有 QTE 运行，如何处置 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "QTE")
-	uint8 ConflictPolicy = 0; // EQTEConflictPolicy::Ignore
+	EQTEConflictPolicy ConflictPolicy = EQTEConflictPolicy::Ignore;
 };

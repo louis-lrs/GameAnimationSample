@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "Evaluation/MovieSceneEvalTemplate.h"
+#include "CinematicQTETypes.h"
 #include "MovieSceneQTESectionTemplate.generated.h"
 
 class UMovieSceneQTESection;
@@ -28,7 +29,7 @@ struct FMovieSceneQTESectionTemplate : public FMovieSceneEvalTemplate
 	FFrameNumber StartFrame;
 
 	UPROPERTY()
-	uint8 ConflictPolicy = 0;
+	EQTEConflictPolicy ConflictPolicy = EQTEConflictPolicy::Ignore;
 
 	virtual UScriptStruct& GetScriptStructImpl() const override
 	{
