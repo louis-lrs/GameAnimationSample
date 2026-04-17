@@ -1,0 +1,43 @@
+{
+	"FileVersion": 3,
+	"Version": 1,
+	"VersionName": "1.0",
+	"FriendlyName": "Cinematic QTE System",
+	"Description": "A Quick Time Event (QTE) system integrated with Level Sequence cinematics, supporting slow-motion interactive events during cutscenes.",
+	"Category": "Gameplay",
+	"CreatedBy": "louis-lrs",
+	"CreatedByURL": "https://github.com/louis-lrs",
+	"DocsURL": "",
+	"MarketplaceURL": "",
+	"SupportURL": "",
+	"CanContainContent": true,
+	"IsBetaVersion": false,
+	"Installed": false,
+	"Modules": [
+		{
+			"Name": "CinematicQTE",
+			"Type": "Runtime",
+			"LoadingPhase": "Default"
+		},
+		{
+			"Name": "CinematicQTEEditor",
+			"Type": "Editor",
+			"LoadingPhase": "PostEngineInit"
+		},
+		{
+			"Name": "CinematicQTETests",
+			"Type": "DeveloperTool",
+			"LoadingPhase": "Default"
+		}
+	],
+	"Plugins": [
+		{
+			"Name": "EnhancedInput",
+			"Enabled": true
+		},
+		{
+			"Name": "LevelSequence",
+			"Enabled": true
+		}
+	]
+}
