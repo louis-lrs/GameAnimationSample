@@ -19,12 +19,10 @@ public class CinematicQTEEditor : ModuleRules
 			"MovieSceneTools",
 			"MovieSceneTracks",
 			"LevelSequence",
-			"LevelSequenceEditor",
 			"CinematicQTE",
 			"InputCore",
 			"Slate",
 			"SlateCore",
-			"EditorStyle",
 			"EditorFramework",
 			"ToolMenus"
 		});

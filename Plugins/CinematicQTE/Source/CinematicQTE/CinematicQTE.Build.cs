@@ -18,8 +18,7 @@ public class CinematicQTE : ModuleRules
 			"LevelSequence",
 			"EnhancedInput",
 			"UMG",
-			"InputCore",
-			"StructUtils"
+			"InputCore"
 		});
 
 		PrivateDependencyModuleNames.AddRange(new string[]

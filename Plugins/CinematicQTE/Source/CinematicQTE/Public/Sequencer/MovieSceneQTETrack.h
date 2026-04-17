@@ -4,13 +4,14 @@
 
 #include "CoreMinimal.h"
 #include "MovieSceneTrack.h"
+#include "Compilation/IMovieSceneTrackTemplateProducer.h"
 #include "MovieSceneQTETrack.generated.h"
 
 /**
  * Sequencer QTE Track：管理一组 QTE Section。
  */
 UCLASS(MinimalAPI)
-class UMovieSceneQTETrack : public UMovieSceneTrack
+class UMovieSceneQTETrack : public UMovieSceneTrack, public IMovieSceneTrackTemplateProducer
 {
 	GENERATED_BODY()
 
@@ -26,10 +27,12 @@ public:
 	virtual bool IsEmpty() const override;
 	virtual bool HasSection(const UMovieSceneSection& Section) const override;
 	virtual const TArray<UMovieSceneSection*>& GetAllSections() const override;
+
+	// ====== IMovieSceneTrackTemplateProducer ======
 	virtual FMovieSceneEvalTemplatePtr CreateTemplateForSection(const UMovieSceneSection& InSection) const override;
 
 #if WITH_EDITORONLY_DATA
-	virtual FText GetDefaultDisplayName() const override;
+	virtual FText GetDisplayName() const override;
 #endif
 
 private:

@@ -58,12 +58,6 @@ bool FMashQTESuccessTest::RunTest(const FString& Parameters)
 	UMashQTEDataAsset* Asset = CinematicQTETestHelpers::MakeMashAsset(5, 2.f);
 	UMashQTETask* Task = NewObject<UMashQTETask>();
 
-	EQTEResult FinalResult = EQTEResult::None;
-	Task->OnQTEFinished.AddLambda([&FinalResult](EQTEResult R, UQTEDataAsset*, FQTEResultMeta)
-	{
-		FinalResult = R;
-	});
-
 	Task->StartQTE(nullptr, nullptr, Asset);
 	TestEqual(TEXT("Initial state running"), (int32)Task->GetTaskState(), (int32)EQTETaskState::Running);
 
@@ -74,7 +68,7 @@ bool FMashQTESuccessTest::RunTest(const FString& Parameters)
 		Task->HandleInput(V);
 	}
 
-	TestEqual(TEXT("Result is Success"), (int32)FinalResult, (int32)EQTEResult::Success);
+	TestEqual(TEXT("Result is Success"), (int32)Task->GetLastResult(), (int32)EQTEResult::Success);
 	TestEqual(TEXT("State finished"), (int32)Task->GetTaskState(), (int32)EQTETaskState::Finished);
 	return true;
 }
@@ -119,17 +113,11 @@ bool FMashQTETimeoutTest::RunTest(const FString& Parameters)
 	UMashQTEDataAsset* Asset = CinematicQTETestHelpers::MakeMashAsset(10, 1.f);
 	UMashQTETask* Task = NewObject<UMashQTETask>();
 
-	EQTEResult FinalResult = EQTEResult::None;
-	Task->OnQTEFinished.AddLambda([&FinalResult](EQTEResult R, UQTEDataAsset*, FQTEResultMeta)
-	{
-		FinalResult = R;
-	});
-
 	Task->StartQTE(nullptr, nullptr, Asset);
 
 	// 推进时间到超时
 	Task->TickQTE(1.1f);
-	TestEqual(TEXT("Result is Timeout"), (int32)FinalResult, (int32)EQTEResult::Timeout);
+	TestEqual(TEXT("Result is Timeout"), (int32)Task->GetLastResult(), (int32)EQTEResult::Timeout);
 	return true;
 }
 
@@ -146,19 +134,13 @@ bool FTapQTEPerfectWindowSuccessTest::RunTest(const FString& Parameters)
 	UTapQTEDataAsset* Asset = CinematicQTETestHelpers::MakeTapAsset(1.f, 0.4f, 0.6f);
 	UTapQTETask* Task = NewObject<UTapQTETask>();
 
-	EQTEResult FinalResult = EQTEResult::None;
-	Task->OnQTEFinished.AddLambda([&FinalResult](EQTEResult R, UQTEDataAsset*, FQTEResultMeta)
-	{
-		FinalResult = R;
-	});
-
 	Task->StartQTE(nullptr, nullptr, Asset);
 	Task->TickQTE(0.5f); // 达到 50% 位置（位于完美窗口内）
 
 	FInputActionValue V(true);
 	Task->HandleInput(V);
 
-	TestEqual(TEXT("Tap Perfect Window Success"), (int32)FinalResult, (int32)EQTEResult::Success);
+	TestEqual(TEXT("Tap Perfect Window Success"), (int32)Task->GetLastResult(), (int32)EQTEResult::Success);
 	return true;
 }
 
@@ -175,19 +157,13 @@ bool FTapQTEOutsideWindowFailTest::RunTest(const FString& Parameters)
 	UTapQTEDataAsset* Asset = CinematicQTETestHelpers::MakeTapAsset(1.f, 0.4f, 0.6f);
 	UTapQTETask* Task = NewObject<UTapQTETask>();
 
-	EQTEResult FinalResult = EQTEResult::None;
-	Task->OnQTEFinished.AddLambda([&FinalResult](EQTEResult R, UQTEDataAsset*, FQTEResultMeta)
-	{
-		FinalResult = R;
-	});
-
 	Task->StartQTE(nullptr, nullptr, Asset);
 	Task->TickQTE(0.2f); // 20% 位置（窗口外）
 
 	FInputActionValue V(true);
 	Task->HandleInput(V);
 
-	TestEqual(TEXT("Tap Outside Window Fail"), (int32)FinalResult, (int32)EQTEResult::Failure);
+	TestEqual(TEXT("Tap Outside Window Fail"), (int32)Task->GetLastResult(), (int32)EQTEResult::Failure);
 	return true;
 }
 
@@ -204,16 +180,10 @@ bool FTapQTETimeoutTest::RunTest(const FString& Parameters)
 	UTapQTEDataAsset* Asset = CinematicQTETestHelpers::MakeTapAsset(1.f, 0.4f, 0.6f);
 	UTapQTETask* Task = NewObject<UTapQTETask>();
 
-	EQTEResult FinalResult = EQTEResult::None;
-	Task->OnQTEFinished.AddLambda([&FinalResult](EQTEResult R, UQTEDataAsset*, FQTEResultMeta)
-	{
-		FinalResult = R;
-	});
-
 	Task->StartQTE(nullptr, nullptr, Asset);
 	Task->TickQTE(1.1f);
 
-	TestEqual(TEXT("Tap Timeout"), (int32)FinalResult, (int32)EQTEResult::Timeout);
+	TestEqual(TEXT("Tap Timeout"), (int32)Task->GetLastResult(), (int32)EQTEResult::Timeout);
 	return true;
 }
 

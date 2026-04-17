@@ -363,7 +363,7 @@ void UCinematicQTESubsystem::BindQTEInput(APlayerController* PC, UQTEDataAsset* 
 	if (UEnhancedInputComponent* EIC = Cast<UEnhancedInputComponent>(PC->InputComponent))
 	{
 		const FEnhancedInputActionEventBinding& Binding = EIC->BindAction(
-			InDataAsset->InputAction, ETriggerEvent::Started, CurrentTask, &UQTETaskBase::HandleInput);
+			InDataAsset->InputAction.Get(), ETriggerEvent::Started, CurrentTask.Get(), &UQTETaskBase::HandleInput);
 		InputBindingHandles.Add(Binding.GetHandle());
 		BoundInputComponent = EIC;
 	}

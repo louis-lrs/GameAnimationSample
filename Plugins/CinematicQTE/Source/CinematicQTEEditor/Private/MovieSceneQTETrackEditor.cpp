@@ -43,8 +43,8 @@ const FSlateBrush* FMovieSceneQTETrackEditor::GetIconBrush() const
 
 void FMovieSceneQTETrackEditor::HandleAddQTETrack()
 {
-	TSharedPtr<ISequencer> Sequencer = GetSequencer();
-	UMovieScene* MovieScene = Sequencer.IsValid() ? Sequencer->GetFocusedMovieSceneSequence()->GetMovieScene() : nullptr;
+	TSharedPtr<ISequencer> LocalSequencer = GetSequencer();
+	UMovieScene* MovieScene = LocalSequencer.IsValid() ? LocalSequencer->GetFocusedMovieSceneSequence()->GetMovieScene() : nullptr;
 	if (!MovieScene || MovieScene->IsReadOnly()) return;
 
 	const FScopedTransaction Transaction(LOCTEXT("AddQTETrack_Transaction", "Add QTE Track"));
@@ -53,7 +53,7 @@ void FMovieSceneQTETrackEditor::HandleAddQTETrack()
 	UMovieSceneQTETrack* NewTrack = MovieScene->AddTrack<UMovieSceneQTETrack>();
 	if (NewTrack)
 	{
-		Sequencer->NotifyMovieSceneDataChanged(EMovieSceneDataChangeType::MovieSceneStructureItemAdded);
+		LocalSequencer->NotifyMovieSceneDataChanged(EMovieSceneDataChangeType::MovieSceneStructureItemAdded);
 	}
 }
 

@@ -75,6 +75,10 @@ public:
 	UFUNCTION(BlueprintPure, Category = "QTE")
 	const FQTEResultMeta& GetResultMeta() const { return ResultMeta; }
 
+	/** 获取最近一次 QTE 结束时的结果（TaskState==Finished 时有效） */
+	UFUNCTION(BlueprintPure, Category = "QTE")
+	EQTEResult GetLastResult() const { return LastResult; }
+
 	/** 调试用：强制指定下一次结束时的结果 */
 	void SetForcedResult(EQTEResult InForcedResult) { ForcedResult = InForcedResult; }
 
@@ -119,6 +123,9 @@ protected:
 
 	UPROPERTY(Transient)
 	FQTEResultMeta ResultMeta;
+
+	UPROPERTY(Transient)
+	EQTEResult LastResult = EQTEResult::None;
 
 	/** 上次广播的进度值，用于节流 */
 	float LastBroadcastProgress = -1.f;

@@ -103,6 +103,7 @@ void UQTETaskBase::FinishQTE(EQTEResult Result)
 	}
 
 	TaskState = EQTETaskState::Finished;
+	LastResult = Result;
 
 	// 填充元数据
 	ResultMeta.ElapsedTime = ElapsedRealTime;

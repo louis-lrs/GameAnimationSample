@@ -65,7 +65,7 @@ FMovieSceneEvalTemplatePtr UMovieSceneQTETrack::CreateTemplateForSection(const U
 }
 
 #if WITH_EDITORONLY_DATA
-FText UMovieSceneQTETrack::GetDefaultDisplayName() const
+FText UMovieSceneQTETrack::GetDisplayName() const
 {
 	return NSLOCTEXT("CinematicQTE", "QTETrackDisplayName", "QTE Track");
 }
