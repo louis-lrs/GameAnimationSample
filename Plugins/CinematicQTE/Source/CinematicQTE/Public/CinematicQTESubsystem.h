@@ -83,6 +83,7 @@ public:
 	float GetCurrentPlayRate() const { return PlayRateController.GetCurrentRate(); }
 
 private:
+	UFUNCTION()
 	void HandleTaskFinished(EQTEResult Result, UQTEDataAsset* InDataAsset, FQTEResultMeta Meta);
 
 	void CreateAndShowWidget(UQTEDataAsset* InDataAsset);
