@@ -2,6 +2,8 @@
 
 一个基于 Unreal Engine 5.5 的**过场动画 QTE（Quick Time Event）系统插件**，支持在 Level Sequence 过场动画的任意时间点插入交互式 QTE，实现"子弹时间"慢动作体验。
 
+> 📖 **新手入门**：建议先跟着 [Docs/GettingStarted.md](Docs/GettingStarted.md) 走一遍手把手教程，20 分钟内完成从零到跑通一段 LevelSequence QTE 的全流程。
+
 ## ✨ 核心特性
 
 - **数据驱动**：`UQTEDataAsset` 可视化配置，策划无需写代码即可接入
