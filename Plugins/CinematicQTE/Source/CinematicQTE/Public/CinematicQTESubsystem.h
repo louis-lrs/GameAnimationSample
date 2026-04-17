@@ -53,18 +53,25 @@ public:
 
 	/**
 	 * 启动一个 QTE。
-	 * @param InDataAsset  QTE 配置
-	 * @param InPlayer     关联的 Sequence Player（可空，为空则不做速率控制）
-	 * @param InConflictPolicy 冲突策略；默认 Ignore
+	 * @param InDataAsset       QTE 配置
+	 * @param InPlayer          关联的 Sequence Player（可空，为空则不做速率控制）
+	 * @param InConflictPolicy  冲突策略；默认 Ignore
+	 * @param InOverrideDuration  覆盖时长（秒），<=0 表示使用 DataAsset.Duration
+	 * @param InOwnerToken      QTE 所有者标识（默认为空 Guid，表示非 Sequencer 调用）
 	 * @return 是否成功启动
 	 */
 	UFUNCTION(BlueprintCallable, Category = "QTE")
 	bool StartQTE(UQTEDataAsset* InDataAsset, ULevelSequencePlayer* InPlayer,
-		EQTEConflictPolicy InConflictPolicy = EQTEConflictPolicy::Ignore);
+		EQTEConflictPolicy InConflictPolicy = EQTEConflictPolicy::Ignore,
+		float InOverrideDuration = -1.f,
+		FGuid InOwnerToken = FGuid());
 
 	/** 取消当前 QTE（带结果分类） */
 	UFUNCTION(BlueprintCallable, Category = "QTE")
 	void CancelCurrentQTE(EQTEResult Result = EQTEResult::Cancelled);
+
+	/** 仅当当前 QTE 的 OwnerToken 匹配时才取消，用于 Sequencer Section 结束时定向结束 */
+	void CancelIfOwnedBy(const FGuid& InOwnerToken, EQTEResult Result = EQTEResult::Timeout);
 
 	UFUNCTION(BlueprintPure, Category = "QTE")
 	bool IsQTEActive() const;
@@ -118,6 +125,9 @@ private:
 
 	/** 速率控制器 */
 	FSequencePlayRateController PlayRateController;
+
+	/** 当前 QTE 所有者标识（由 Sequencer Section Signature 提供；非空表示由 Sequencer 驱动） */
+	FGuid CurrentOwnerToken;
 
 	/** 待处理的 QTE 队列（Queue 策略使用） */
 	UPROPERTY(Transient)

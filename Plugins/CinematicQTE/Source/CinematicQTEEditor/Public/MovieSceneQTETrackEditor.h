@@ -28,8 +28,12 @@ public:
 	virtual void BuildAddTrackMenu(FMenuBuilder& MenuBuilder) override;
 	virtual void BuildTrackContextMenu(FMenuBuilder& MenuBuilder, UMovieSceneTrack* Track) override;
 	virtual const FSlateBrush* GetIconBrush() const override;
+	virtual TSharedRef<ISequencerSection> MakeSectionInterface(UMovieSceneSection& SectionObject,
+		UMovieSceneTrack& Track, FGuid ObjectBinding) override;
 
 private:
 	void HandleAddQTETrack();
+
+	/** 添加 QTE Section（单一入口）。默认长度 0.25s，运行时长由 Section.bUseSectionRangeAsDuration 控制 */
 	void HandleAddQTESection(UMovieSceneTrack* Track);
 };

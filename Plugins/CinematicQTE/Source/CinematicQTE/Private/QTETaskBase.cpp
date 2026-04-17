@@ -10,7 +10,8 @@ UQTETaskBase::UQTETaskBase()
 {
 }
 
-void UQTETaskBase::StartQTE(UWorld* InWorld, APlayerController* InPC, UQTEDataAsset* InDataAsset)
+void UQTETaskBase::StartQTE(UWorld* InWorld, APlayerController* InPC, UQTEDataAsset* InDataAsset,
+	float InOverrideDuration /*= -1.f*/)
 {
 	if (!ensureAlwaysMsgf(TaskState == EQTETaskState::Idle,
 		TEXT("QTETask[%s] StartQTE called on non-Idle task (state=%d). Caller must Finish/Cancel previous task first."),
@@ -36,7 +37,8 @@ void UQTETaskBase::StartQTE(UWorld* InWorld, APlayerController* InPC, UQTEDataAs
 	WorldRef = InWorld;
 	PCRef = InPC;
 	DataAsset = InDataAsset;
-	TotalDuration = InDataAsset->Duration;
+	// 优先使用外部覆盖时长（Sequencer B 模式），否则走 DataAsset.Duration
+	TotalDuration = (InOverrideDuration > 0.f) ? InOverrideDuration : InDataAsset->Duration;
 	RemainingTime = TotalDuration;
 	CurrentProgress = 0.f;
 	ElapsedRealTime = 0.f;
@@ -45,8 +47,8 @@ void UQTETaskBase::StartQTE(UWorld* InWorld, APlayerController* InPC, UQTEDataAs
 	LastBroadcastRatio = -1.f;
 	TaskState = EQTETaskState::Running;
 
-	UE_LOG(LogCinematicQTE, Log, TEXT("QTETask[%s] Started. Asset=%s Duration=%.2f"),
-		*GetName(), *InDataAsset->GetName(), TotalDuration);
+	UE_LOG(LogCinematicQTE, Log, TEXT("QTETask[%s] Started. Asset=%s Duration=%.2f (Override=%.2f)"),
+		*GetName(), *InDataAsset->GetName(), TotalDuration, InOverrideDuration);
 
 	OnStartQTE();
 

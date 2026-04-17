@@ -40,8 +40,9 @@ public:
 
 	// ====== Lifecycle ======
 
-	/** 开始 QTE */
-	virtual void StartQTE(UWorld* InWorld, APlayerController* InPC, UQTEDataAsset* InDataAsset);
+	/** 开始 QTE；InOverrideDuration<=0 时使用 DataAsset->Duration */
+	virtual void StartQTE(UWorld* InWorld, APlayerController* InPC, UQTEDataAsset* InDataAsset,
+		float InOverrideDuration = -1.f);
 
 	/** 每帧更新（由 Subsystem 驱动） */
 	virtual void TickQTE(float DeltaTime);

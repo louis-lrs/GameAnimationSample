@@ -41,7 +41,7 @@ public:
 	void BP_OnRemainingTimeChanged(float RemainingRatio);
 
 	UFUNCTION(BlueprintImplementableEvent, Category = "QTE", meta = (DisplayName = "On Perfect Window Info"))
-	void BP_OnPerfectWindowInfo(bool bHasPerfectWindow, float WindowStart, float WindowEnd);
+	void BP_OnPerfectWindowInfo(bool bInHasPerfectWindow, float InWindowStart, float InWindowEnd);
 
 	UFUNCTION(BlueprintImplementableEvent, Category = "QTE", meta = (DisplayName = "On QTE Finished"))
 	void BP_OnQTEFinished(EQTEResult Result);

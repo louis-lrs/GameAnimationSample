@@ -209,32 +209,53 @@ Canvas Panel（根）
 3. 把时间轴末尾拖到 `00:00:10`（10 秒）
 4. （可选）给 CineCamera 的 Transform 打两个 keyframe 做个轻微位移
 
-### 6.3 ⭐ 添加第 1 个 QTE（Mash，触发时间 = 2s）
+### 6.3 QTE Section 的两种时长模式
+
+添加的 Section 都是同一种（无创建入口差异），运行时长由 Section 上的 `bUseSectionRangeAsDuration` 勾选框切换：
+
+| `bUseSectionRangeAsDuration` | 语义 | 运行时长 | Section 长度作用 | 适用 |
+|---|---|---|---|---|
+| **false（默认）** | AnimNotify 风格 | `DataAsset.Duration` | 仅视觉占位 | 固定时长的 Mash/Tap，策划只关心“哪一刻触发” |
+| **true**         | AnimNotifyState 风格 | Section 长度 | 决定运行时长 | 需要用时间轴宽度反映节奏，Section 末端未通关则 `Timeout` |
+
+> 📌 两种模式下 Section 都可以自由拖动位置 / 拉伸长度 / 在 Details 面板编辑属性，两者解耦。即使在 Key 模式下拉长了 Section，运行时仍然以 `DataAsset.Duration` 为准；Section 长度仅影响时间轴上的视觉占位。
+
+### 6.4 ⭐ 添加 Mash（Key 模式，触发点 = 2s）
 
 1. Sequencer `+ Track ▾` → **QTE Track**（CinematicQTEEditor 注入的入口）
 2. 时间轴光标拖到 `2s`
-3. **在 QTE Track 行上右键 → `QTE → Add QTE Section`**
-4. 生成的 Section 起点在 2s，选中它，在右侧 Details：
+3. 在 QTE Track 行上右键 → `QTE → **Add QTE Section**`
+4. 选中生成的 Section（菱形 icon，默认长度 0.25s，视觉占位），在右侧 Details：
    - `QTE → QTE Data Asset` = `DA_QTE_Mash_Demo`
    - `QTE → Conflict Policy` = `Ignore`
+   - `QTE → Use Section Range As Duration` = **❌ 保持未勾选**
 
-### 6.4 ⭐ 添加第 2 个 QTE（Tap，触发时间 = 7s）
+运行时长 = `DA_QTE_Mash_Demo.Duration = 5.0s`，即 2s~7s（Section 视觉长度不影响运行）。
+
+### 6.5 ⭐ 添加 Tap（Range 模式，窗口 = 7s ~ 8.2s）
 
 > 💡 同一条 QTE Track 可以承载多个 Section。
 
 1. 时间轴光标拖到 `7s`
-2. 在同一条 QTE Track 上右键 → `QTE → Add QTE Section`
-3. 选中新 Section：
+2. 在同一条 QTE Track 上右键 → `QTE → **Add QTE Section**`
+3. 新生成的 Section 默认长度 0.25s；**抓住 Section 右端手柄拖到 `8.2s`**，让窗口长度 = 1.2s
+4. 选中 Section，在 Details：
    - `QTE Data Asset` = `DA_QTE_Tap_Demo`
    - `Conflict Policy` = `Ignore`
+   - `Use Section Range As Duration` = **✅ 勾选**
+
+勾选后，`DataAsset.Duration` 被忽略，**实际运行时长 = Section 长度 = 1.2s**，期间未通关则 `Timeout`。
 
 完成后 Sequencer 大致是：
 
 ```
-|Camera Cut|====[ CineCamera ]========================|
-|QTE       |    ▇Mash▇           ▇Tap▇               |
-0s         2s      5s(mash end)   7s  9s(tap end) 10s
+|Camera Cut|===[ CineCamera ]==========================|
+|QTE       |   ◆Mash                     ▇▇Tap▇▇          |
+0s         2s  (DA.Duration=5s, 结束于 7s)  7s      8.2s
+                                                         10s
 ```
+
+◆ = Key 模式（菱形 icon + 短占位条）；▇ = Range 模式（矩形条长度 = 运行时长）。
 
 保存。
 
@@ -267,13 +288,13 @@ qte.Debug.Show 1
 | 时间 | 现象 |
 |---|---|
 | 0~2s | 摄像机过场正常播，PlayRate = 1.0 |
-| **2s** | 调试 HUD 显示 `QTE: Mash`，PlayRate 在 0.2s 内从 1.0 插到 0.01，Widget 弹出 |
-| 2s~7s | **持续按 E 键** ≥10 次（间隔 > 50ms），进度满 → `Result: Success`；或啥都不按到 7s → `Result: Timeout` |
+| **2s** | 调试 HUD 显示 `QTE: Mash`（Key 模式），PlayRate 在 0.2s 内从 1.0 插到 0.01，Widget 弹出 |
+| 2s~7s | **持续按 E 键** ≥10 次（间隔 > 50ms），进度满 → `Result: Success`；或啥都不按到 7s → `Result: Timeout`。Key 模式 QTE 时长 = `DA.Duration = 5s`，结束点固定在 7s（与 Section 视觉长度无关） |
 | QTE 结束 | PlayRate 在 0.3s 内从 0.01 插回 1.0，Widget 消失 |
-| ~7s | 过场继续，PlayRate 再次慢速，`QTE: Tap` |
-| 完美窗口（7.8s ~ 8.4s）按 Space | `Result: Success` |
-| 窗口外按 Space | `Result: Failure`，立即结束 |
-| 全程不按 | 2s 后 `Result: Timeout` |
+| 7s | 过场继续，PlayRate 再次慢速，`QTE: Tap`（Range 模式），窗口 `7s ~ 8.2s`（Section 长度 1.2s） |
+| 窗口内按 Space（看 UI 绿色完美区高亮） | `Result: Success` |
+| 非完美区按 Space | `Result: Failure`，立即结束 |
+| 全程不按 | **8.2s** 时 Section 末端到达 → `Result: Timeout`（Range 模式由 Section 末端驱动） |
 | ~10s | 过场结束 |
 
 ### 8.3 常用调试命令
@@ -337,6 +358,8 @@ LogAutomationController: Test Completed. Result={Passed}  Name={CinematicQTE.Mas
 |---|---|---|
 | `+ Track` 里找不到 `QTE Track` | `CinematicQTEEditor` 未加载 | Plugins 面板启用；Output Log 搜 `LogCinematicQTEEditor` 查报错 |
 | QTE Track 行右键没菜单 | 插件旧版本缺 `BuildTrackContextMenu` | 拉取最新代码重新编译 |
+| 拉伸了 Key 模式 Section 但运行时长没变 | 设计如此：Key 模式下 Section 长度仅视觉占位，运行时以 `DA.Duration` 为准 | 改时长请编辑 DataAsset；或勾上 `Use Section Range As Duration` |
+| Range 模式 Section 到头没 Timeout | 忘了勾 `Use Section Range As Duration` | 勾上该选项 |
 | QTE 触发了但按键不响应 | IMC 没 push 到玩家 | Step 5 的 `AddMappingContext(IMC_QTEDemo)` 没做 |
 | QTE 触发但过场没变慢 | Sequence 的 `Auto Play` 没开，或不是由 `ULevelSequencePlayer` 驱动 | Details 启用 Auto Play；或用蓝图的 `Create Level Sequence Player` 节点手动播 |
 | UI 没出现 | DataAsset 的 `WidgetClass` 为空；Widget 父类不是 `QTEWidgetBase` | 检查字段与父类 |
@@ -364,7 +387,7 @@ Content/QTEDemo/
 ├── Maps/
 │   └── Map_QTETest
 └── Sequences/
-    └── LS_QTEDemo      ← 2 条 Track：Camera Cut + QTE（两个 Section）
+    └── LS_QTEDemo      ← 2 条 Track：Camera Cut + QTE（两个 Section：默认 Key 模式 + 勾选 Range 模式）
 ```
 
 按这份教程走一遍，就完成了 **Mash 连点** 和 **Tap 时机** 两种 QTE 在 LevelSequence 过场中的插入、慢速、输入、UI、回调的完整闭环测试。

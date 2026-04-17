@@ -130,7 +130,9 @@ UCinematicQTESubsystem* UCinematicQTESubsystem::Get(const UObject* WorldContext)
 // ============================================================================
 
 bool UCinematicQTESubsystem::StartQTE(UQTEDataAsset* InDataAsset, ULevelSequencePlayer* InPlayer,
-	EQTEConflictPolicy InConflictPolicy /*= EQTEConflictPolicy::Ignore*/)
+	EQTEConflictPolicy InConflictPolicy /*= EQTEConflictPolicy::Ignore*/,
+	float InOverrideDuration /*= -1.f*/,
+	FGuid InOwnerToken /*= FGuid()*/)
 {
 	if (!ensureMsgf(IsValid(InDataAsset), TEXT("StartQTE called with null/invalid DataAsset.")))
 	{
@@ -180,6 +182,7 @@ bool UCinematicQTESubsystem::StartQTE(UQTEDataAsset* InDataAsset, ULevelSequence
 	CurrentTask->OnQTEFinished.AddDynamic(this, &UCinematicQTESubsystem::HandleTaskFinished);
 
 	CurrentSequencePlayer = InPlayer;
+	CurrentOwnerToken = InOwnerToken;
 
 	// 速率切换
 	if (InPlayer)
@@ -208,7 +211,7 @@ bool UCinematicQTESubsystem::StartQTE(UQTEDataAsset* InDataAsset, ULevelSequence
 	}
 
 	// 启动任务
-	CurrentTask->StartQTE(World, PC, InDataAsset);
+	CurrentTask->StartQTE(World, PC, InDataAsset, InOverrideDuration);
 
 	// 检查调试强制结果
 	CheckForcedDebugResult();
@@ -223,6 +226,18 @@ void UCinematicQTESubsystem::CancelCurrentQTE(EQTEResult Result /*= EQTEResult::
 		CurrentTask->FinishQTE(Result);
 		// HandleTaskFinished 会接着完成清理
 	}
+}
+
+void UCinematicQTESubsystem::CancelIfOwnedBy(const FGuid& InOwnerToken, EQTEResult Result /*= EQTEResult::Timeout*/)
+{
+	// 仅当不空且匹配当前 Owner 时才结束，避免误伤其他调用者启动的 QTE
+	if (!InOwnerToken.IsValid()) return;
+	if (!IsQTEActive()) return;
+	if (CurrentOwnerToken != InOwnerToken) return;
+
+	UE_LOG(LogCinematicQTE, Log, TEXT("CancelIfOwnedBy: Owner=%s Result=%d"),
+		*InOwnerToken.ToString(), (int32)Result);
+	CancelCurrentQTE(Result);
 }
 
 bool UCinematicQTESubsystem::IsQTEActive() const
@@ -267,6 +282,7 @@ void UCinematicQTESubsystem::HandleTaskFinished(EQTEResult Result, UQTEDataAsset
 		CurrentTask = nullptr;
 	}
 	CurrentSequencePlayer.Reset();
+	CurrentOwnerToken.Invalidate();
 
 	// 处理队列
 	if (QueuedAssets.Num() > 0)

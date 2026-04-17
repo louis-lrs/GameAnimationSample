@@ -3,6 +3,7 @@
 #include "MovieSceneQTETrackEditor.h"
 #include "Sequencer/MovieSceneQTETrack.h"
 #include "Sequencer/MovieSceneQTESection.h"
+#include "QTESectionInterface.h"
 #include "MovieScene.h"
 #include "ISequencer.h"
 #include "Framework/MultiBox/MultiBoxBuilder.h"
@@ -41,13 +42,22 @@ const FSlateBrush* FMovieSceneQTETrackEditor::GetIconBrush() const
 	return FAppStyle::GetBrush("Sequencer.Tracks.Event");
 }
 
+TSharedRef<ISequencerSection> FMovieSceneQTETrackEditor::MakeSectionInterface(UMovieSceneSection& SectionObject,
+	UMovieSceneTrack& Track, FGuid ObjectBinding)
+{
+	return MakeShared<FQTESection>(SectionObject, GetSequencer());
+}
+
 void FMovieSceneQTETrackEditor::BuildTrackContextMenu(FMenuBuilder& MenuBuilder, UMovieSceneTrack* Track)
 {
 	MenuBuilder.BeginSection("QTE", LOCTEXT("QTESectionHeader", "QTE"));
 	{
 		MenuBuilder.AddMenuEntry(
 			LOCTEXT("AddQTESection", "Add QTE Section"),
-			LOCTEXT("AddQTESectionTooltip", "Add a new QTE section at the current playback time."),
+			LOCTEXT("AddQTESectionTooltip",
+				"Add a QTE section at the current playhead. "
+				"Default runtime duration is driven by DataAsset.Duration; "
+				"toggle 'Use Section Range As Duration' on the section to drive it by Section length instead."),
 			FSlateIcon(FAppStyle::GetAppStyleSetName(), "Sequencer.Tracks.Event"),
 			FUIAction(FExecuteAction::CreateSP(this, &FMovieSceneQTETrackEditor::HandleAddQTESection, Track))
 		);
@@ -73,17 +83,20 @@ void FMovieSceneQTETrackEditor::HandleAddQTESection(UMovieSceneTrack* Track)
 	const FScopedTransaction Transaction(LOCTEXT("AddQTESection_Transaction", "Add QTE Section"));
 	QTETrack->Modify();
 
-	UMovieSceneSection* NewSection = QTETrack->CreateNewSection();
+	// Section 默认长度 0.25s，便于在时间轴上可见且便于拖拽；
+	// 运行时长语义由 Section.bUseSectionRangeAsDuration 决定，与视觉长度解耦。
+	const FFrameNumber CurrentFrame = LocalSequencer->GetLocalTime().Time.FrameNumber;
+	const FFrameRate TickResolution = MovieScene->GetTickResolution();
+	const FFrameNumber Length = (0.25 * TickResolution).FrameNumber;
+
+	UMovieSceneQTESection* NewSection = Cast<UMovieSceneQTESection>(QTETrack->CreateNewSection());
 	if (!NewSection)
 	{
 		return;
 	}
 
-	// 以当前播放光标位置作为 Section 起点，默认长度 1 秒
-	const FFrameNumber CurrentFrame = LocalSequencer->GetLocalTime().Time.FrameNumber;
-	const FFrameRate TickResolution = MovieScene->GetTickResolution();
-	const FFrameNumber DefaultLength = (1.0 * TickResolution).FrameNumber;
-	NewSection->SetRange(TRange<FFrameNumber>(CurrentFrame, CurrentFrame + DefaultLength));
+	NewSection->Modify();
+	NewSection->SetRange(TRange<FFrameNumber>(CurrentFrame, CurrentFrame + Length));
 
 	QTETrack->AddSection(*NewSection);
 	LocalSequencer->NotifyMovieSceneDataChanged(EMovieSceneDataChangeType::MovieSceneStructureItemAdded);
