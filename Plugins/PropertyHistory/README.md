@@ -1,8 +1,8 @@
 # Property History
 
-Property history is a small plugin to view property history inline. 
+Property history is a small plugin to view property history inline.
 
-**Only 5.5 and 5.6 are supported at this time**
+**Supported Unreal Engine versions:** 5.5, 5.6, and **5.8** (verified in this project with the Epic binary engine build).
 
 https://github.com/user-attachments/assets/a23e42a9-31a9-49ec-8a42-d61929b55043
 
