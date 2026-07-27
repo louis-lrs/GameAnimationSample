@@ -94,7 +94,7 @@ FString UEnhancedPlayerInfo::DefaultGetPlayerInfoString(const UObject* ContextOb
 			{
 				case NM_DedicatedServer:   NetMode = TEXT("NM_DedicatedServer"); break;
 				case NM_ListenServer:	   NetMode = TEXT("NM_ListenServer"); break;
-				case NM_Client:            NetMode = FString::Printf(TEXT("NM_Client_%d"), static_cast<int32>(GPlayInEditorID)); break;
+				case NM_Client:            NetMode = FString::Printf(TEXT("NM_Client_%d"), UE::GetPlayInEditorID()); break;
 				case NM_Standalone:        NetMode = TEXT("NM_Standalone"); break;
 				default:
 					break;

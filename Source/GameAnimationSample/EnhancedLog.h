@@ -37,42 +37,9 @@ public:
 
 
 
+// UE 5.8+: avoid private FStaticBasicLogRecord API; prefix player info via UE_LOG.
 #define UE_LOG_ENHANCED(Category, Verbosity, ContextObject, Fmt, ...) \
-	{ \
-		static ::UE::Logging::Private::FStaticBasicLogDynamicData LOG_Dynamic; \
-		static_assert((::ELogVerbosity::Verbosity & ::ELogVerbosity::VerbosityMask) < ::ELogVerbosity::NumVerbosity && ::ELogVerbosity::Verbosity > 0, "Verbosity must be constant and in range."); \
-		if constexpr ((::ELogVerbosity::Verbosity & ELogVerbosity::VerbosityMask) == ::ELogVerbosity::Fatal) \
-		{ \
-			{ \
-				const FString FormattedString = UEnhancedPlayerInfo::DefaultGetPlayerInfoString(ContextObject) + FString(Fmt);\
-				constexpr int MAX_FORMAT = 4096;\
-				const int CopyLen = FMath::Clamp(FormattedString.Len()+1, 0, MAX_FORMAT - 1);\
-				static TCHAR FormatArray[MAX_FORMAT] = {} ;\
-				FCString::Strncpy(FormatArray, *FormattedString, CopyLen);\
-				static constexpr ::UE::Logging::Private::FStaticBasicLogRecord LOG_Static(FormatArray, __builtin_FILE(), __builtin_LINE(), ::ELogVerbosity::Verbosity, LOG_Dynamic); \
-				::UE::Logging::Private::BasicFatalLog(Category, &LOG_Static, ##__VA_ARGS__); \
-				CA_ASSUME(false); \
-			} \
-		} \
-		else if constexpr ((::ELogVerbosity::Verbosity & ::ELogVerbosity::VerbosityMask) <= ::ELogVerbosity::COMPILED_IN_MINIMUM_VERBOSITY) \
-		{ \
-			if constexpr ((::ELogVerbosity::Verbosity & ::ELogVerbosity::VerbosityMask) <= Category.GetCompileTimeVerbosity()) \
-			{ \
-				if (!Category.IsSuppressed(::ELogVerbosity::Verbosity)) \
-				{ \
-					{ \
-						const FString FormattedString = UEnhancedPlayerInfo::DefaultGetPlayerInfoString(ContextObject) + FString(Fmt);\
-						constexpr int MAX_FORMAT = 4096;\
-						const int CopyLen = FMath::Clamp(FormattedString.Len()+1, 0, MAX_FORMAT - 1);\
-						static TCHAR FormatArray[MAX_FORMAT] = {} ;\
-						FCString::Strncpy(FormatArray, *FormattedString, CopyLen);\
-						static constexpr ::UE::Logging::Private::FStaticBasicLogRecord LOG_Static(FormatArray, __builtin_FILE(), __builtin_LINE(), ::ELogVerbosity::Verbosity, LOG_Dynamic); \
-						::UE::Logging::Private::BasicLog(Category, &LOG_Static, ##__VA_ARGS__); \
-					} \
-				} \
-			} \
-		} \
-	}
+	UE_LOG(Category, Verbosity, TEXT("%s") Fmt, *UEnhancedPlayerInfo::DefaultGetPlayerInfoString(ContextObject), ##__VA_ARGS__)
 
 #define UE_LOG_GATED(GateVar, CategoryName, Verbosity, ContextObject, Fmt, ...) \
-	if (GateVar) { UE_LOG_ENHANCED(CategoryName, Verbosity, ContextObject, Fmt, ##__VA_ARGS__) }
+	do { if (GateVar) { UE_LOG_ENHANCED(CategoryName, Verbosity, ContextObject, Fmt, ##__VA_ARGS__); } } while (0)
