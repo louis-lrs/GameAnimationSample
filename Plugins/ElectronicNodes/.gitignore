@@ -1,0 +1,8 @@
+Binaries/
+Intermediate/
+Saved/
+*.dll
+*.pdb
+*.exp
+*.lib
+Settings.ini
