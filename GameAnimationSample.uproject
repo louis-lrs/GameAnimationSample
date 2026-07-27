@@ -88,6 +88,13 @@
 		{
 			"Name": "CinematicQTE",
 			"Enabled": true
+		},
+		{
+			"Name": "PropertyHistory",
+			"Enabled": true,
+			"TargetAllowList": [
+				"Editor"
+			]
 		}
 	],
 	"EpicSampleNameHash": "1673045636"
