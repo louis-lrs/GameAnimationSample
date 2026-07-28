@@ -25,28 +25,37 @@
 #include "DrawDebugLibrary.h"
 #endif
 
-static TAutoConsoleVariable<int32> CVarAnimSkillMovement_DebugDynamicCapsule(TEXT("a.AnimSkill.Movement.DebugDynamicCapsule"),0,TEXT("0: Disable, 1: Autonomous, 2: Client, 3: DedicatedServer, 4: Simulated Proxy, 5: All"));
-static TAutoConsoleVariable<int32> CVarAnimSkillMovement_DebugMovement(TEXT("a.AnimSkill.Movement.DebugMovement"),0,TEXT("0: Disable, 1: Autonomous, 2: Client, 3: DedicatedServer, 4: Simulated Proxy, 5: All"));
-static TAutoConsoleVariable<int32> CVarAnimSkillMovement_DebugClientID(TEXT("a.AnimSkill.Movement.DebugClientID"),-1,TEXT(""));
-static TAutoConsoleVariable<int32> CVarAnimSkillMovement_DebugStanceCollision(TEXT("a.AnimSkill.Movement.DebugStanceCollision"),0,TEXT("0: Disable, 1: Enable"));
+// Role filter: 0 Off, 1 Autonomous, 2 Client, 3 DedicatedServer, 4 SimulatedProxy, 5 All
+static TAutoConsoleVariable<int32> CVarGeMove_Debug(
+	TEXT("Ge.Move.Debug"), 0,
+	TEXT("Movement debug draw. 0: Off, 1: Autonomous, 2: Client, 3: DedicatedServer, 4: SimulatedProxy, 5: All"));
+static TAutoConsoleVariable<int32> CVarGeMove_DebugDynCapsule(
+	TEXT("Ge.Move.Debug.DynCapsule"), 0,
+	TEXT("Dynamic capsule debug. 0: Off, 1: Autonomous, 2: Client, 3: DedicatedServer, 4: SimulatedProxy, 5: All"));
+static TAutoConsoleVariable<int32> CVarGeMove_DebugClientID(
+	TEXT("Ge.Move.Debug.ClientID"), -1,
+	TEXT("PIE client ID filter for movement debug. -1: no filter"));
+static TAutoConsoleVariable<int32> CVarGeMove_DebugStance(
+	TEXT("Ge.Move.Debug.Stance"), 0,
+	TEXT("Draw stance collision traces for dynamic capsule. 0: Off, 1: On"));
 
 #if !(UE_BUILD_SHIPPING || UE_BUILD_TEST)
-// Sub-toggles for DisplayDebugForGame, only evaluated when a.AnimSkill.Movement.DebugMovement is active
-static TAutoConsoleVariable<bool> CVarAnimSkillMovement_DebugMovementShapes(
-	TEXT("a.AnimSkill.Movement.DebugMovement.Shapes"), true,
-	TEXT("Draw the rotation ring (control/actor/desired), velocity/acceleration/input arrows, capsule and floor normal"));
-static TAutoConsoleVariable<bool> CVarAnimSkillMovement_DebugMovementPanel(
-	TEXT("a.AnimSkill.Movement.DebugMovement.Panel"), true,
+// Sub-toggles for DisplayDebugForGame, only evaluated when Ge.Move.Debug is active
+static TAutoConsoleVariable<bool> CVarGeMove_DebugShapes(
+	TEXT("Ge.Move.Debug.Shapes"), true,
+	TEXT("Draw rotation ring, velocity/accel/input arrows, capsule and floor normal"));
+static TAutoConsoleVariable<bool> CVarGeMove_DebugPanel(
+	TEXT("Ge.Move.Debug.Panel"), true,
 	TEXT("Draw the camera-facing movement state text panel"));
-static TAutoConsoleVariable<bool> CVarAnimSkillMovement_DebugMovementBars(
-	TEXT("a.AnimSkill.Movement.DebugMovement.Bars"), true,
+static TAutoConsoleVariable<bool> CVarGeMove_DebugBars(
+	TEXT("Ge.Move.Debug.Bars"), true,
 	TEXT("Draw normalized speed/acceleration/jump apex progress bars"));
-static TAutoConsoleVariable<int32> CVarAnimSkillMovement_DebugMovementHistory(
-	TEXT("a.AnimSkill.Movement.DebugMovement.History"), 200,
-	TEXT("Number of points kept in the movement trail. 0: Disable. Locally controlled characters only"));
-static TAutoConsoleVariable<bool> CVarAnimSkillMovement_DebugMovementGraph(
-	TEXT("a.AnimSkill.Movement.DebugMovement.Graph"), true,
-	TEXT("Draw the 2D speed history graph above the character. Locally controlled characters only"));
+static TAutoConsoleVariable<int32> CVarGeMove_DebugHistory(
+	TEXT("Ge.Move.Debug.History"), 200,
+	TEXT("Movement trail point count. 0: Off. Locally controlled only"));
+static TAutoConsoleVariable<bool> CVarGeMove_DebugGraph(
+	TEXT("Ge.Move.Debug.Graph"), true,
+	TEXT("Draw 2D speed history graph. Locally controlled only"));
 #endif
 
 static bool GDisplayLogCapsule = false;
@@ -54,22 +63,22 @@ static bool GDisplayLogCapsule = false;
 namespace GeCharacterMovementCVars
 {
 	/** Whether to enable dynamic capsule size adjustment while jumping. */
-	static bool bEnableDynamicCapusle = true;
-	FAutoConsoleVariableRef CVarEnableDynamicCapusle(
-		TEXT("a.AnimSkill.Movement.EnableDynamicCapusle"),
-		bEnableDynamicCapusle,
+	static bool bEnableDynCapsule = true;
+	FAutoConsoleVariableRef CVarDynCapsule(
+		TEXT("Ge.Move.DynCapsule"),
+		bEnableDynCapsule,
 		TEXT("Enable dynamic capsule size adjustment. 1 = enabled (default), 0 = disabled."));
-    	
+
 	/** Whether to enable capsule size change logging for debug purposes. */
-	FAutoConsoleVariableRef CVarEnableLogCapsule(
-		TEXT("a.AnimSkill.Movement.EnableLogCapsule"),
+	FAutoConsoleVariableRef CVarLogCapsule(
+		TEXT("Ge.Move.LogCapsule"),
 		GDisplayLogCapsule,
-		TEXT("Enable verbose logging of capsule size changes. 1 = enabled, 0 = disabled (default)."));
+		TEXT("Verbose logging of capsule size changes. 1 = enabled, 0 = disabled (default)."));
 
 	/** Controls the branch of SlideAlongSurface. */
 	static int32 SlideNormalZFix = 0;
 	FAutoConsoleVariableRef CVarSlideNormalZFix(
-		TEXT("p.Ge.SlideNormalZFix"),
+		TEXT("Ge.Move.SlideNormalZFix"),
 		SlideNormalZFix,
 		TEXT("SlideAlongSurface NormalZ<0 fix mode:\n"
 		     "  0 = Original (always ProjectToGravityFloor)\n"
@@ -110,7 +119,7 @@ static bool ShouldEnableDebugForRole(int32 DebugMode, const AActor* Actor)
 	}
 	
 	// Check client ID filter
-	const auto ClientID = CVarAnimSkillMovement_DebugClientID.GetValueOnAnyThread();
+	const auto ClientID = CVarGeMove_DebugClientID.GetValueOnAnyThread();
 	if (ClientID > 0)
 	{
 		if (UE::GetPlayInEditorID() != ClientID)
@@ -190,14 +199,14 @@ void UGeCharacterMovementComponent::TickComponent(float DeltaTime, ELevelTick Ti
 	}
 	
 	// Debug movement info
-	const int32 theDebugMovement = CVarAnimSkillMovement_DebugMovement.GetValueOnAnyThread();
+	const int32 theDebugMovement = CVarGeMove_Debug.GetValueOnAnyThread();
 	if (ShouldEnableDebugForRole(theDebugMovement, CharacterOwner))
 	{
 		DisplayDebugForGame(DeltaTime);
 	}
 	
 	// Debug dynamic capsule info
-	const int32 theDebugDynamicCapsule = CVarAnimSkillMovement_DebugDynamicCapsule.GetValueOnAnyThread();
+	const int32 theDebugDynamicCapsule = CVarGeMove_DebugDynCapsule.GetValueOnAnyThread();
 	if (ShouldEnableDebugForRole(theDebugDynamicCapsule, CharacterOwner))
 	{
 		const FString DebugInfo = GetDynamicCapsuleDebugInfo();
@@ -722,7 +731,7 @@ bool UGeCharacterMovementComponent::SetCapsuleStage(EJumpCapsuleStage NewCapsule
 		    const bool bHitResult = MyWorld->SweepSingleByChannel(FloorHit, Start, End, FQuat::Identity, CollisionChannel, SweepCapsuleShape, CapsuleParams, ResponseParam);
 
 #if ENABLE_DRAW_DEBUG
-		    if (CVarAnimSkillMovement_DebugStanceCollision.GetValueOnAnyThread() > 0)
+		    if (CVarGeMove_DebugStance.GetValueOnAnyThread() > 0)
 		    {
 		    	DrawDebugCapsuleTraceSingle(MyWorld, Start, End, SweepCapsuleShape.GetCapsuleRadius(), SweepCapsuleShape.GetCapsuleHalfHeight(),
 		    		EDrawDebugTrace::Type::ForDuration, bHitResult, FloorHit, FLinearColor::Green, FLinearColor::Red, 3.f);
@@ -750,7 +759,7 @@ bool UGeCharacterMovementComponent::SetCapsuleStage(EJumpCapsuleStage NewCapsule
 		    const bool bHitResult = MyWorld->SweepSingleByChannel(CeilingHit, Start, End, FQuat::Identity, CollisionChannel, SweepCapsuleShape, CapsuleParams, ResponseParam);
 
 #if ENABLE_DRAW_DEBUG
-		    if (CVarAnimSkillMovement_DebugStanceCollision.GetValueOnAnyThread() > 0)
+		    if (CVarGeMove_DebugStance.GetValueOnAnyThread() > 0)
 		    {
 		    	DrawDebugCapsuleTraceSingle(MyWorld, Start, End, SweepCapsuleShape.GetCapsuleRadius(), SweepCapsuleShape.GetCapsuleHalfHeight(),
 		    		EDrawDebugTrace::Type::ForDuration, bHitResult, CeilingHit, FLinearColor::Green, FLinearColor::Red, 3.f);
@@ -773,7 +782,7 @@ bool UGeCharacterMovementComponent::SetCapsuleStage(EJumpCapsuleStage NewCapsule
 	    const bool bEncroached = MyWorld->OverlapBlockingTestByChannel(ProposedLocation, PawnRotation, CollisionChannel, TargetCapsuleShape, VerifyParams, VerifyResponse);
 
 #if ENABLE_DRAW_DEBUG
-	    if (CVarAnimSkillMovement_DebugStanceCollision.GetValueOnAnyThread() > 0)
+	    if (CVarGeMove_DebugStance.GetValueOnAnyThread() > 0)
 	    {
 		    const FTransform ActorTransform = GetActorTransform();
 		    const FVector LocalOffset = ActorTransform.TransformVectorNoScale(FVector(0, 50, 0));
@@ -955,7 +964,7 @@ void UGeCharacterMovementComponent::InterpMeshOffset(float DeltaTime)
 
 void UGeCharacterMovementComponent::UpdateDynamicCapsule(float DeltaSeconds)
 {
-	if (!(bEnableDynamicCapsule && GeCharacterMovementCVars::bEnableDynamicCapusle))
+	if (!(bEnableDynamicCapsule && GeCharacterMovementCVars::bEnableDynCapsule))
 	{
 		return;
 	}
@@ -1039,7 +1048,7 @@ void UGeCharacterMovementComponent::UpdateDynamicCapsule(float DeltaSeconds)
 
 void UGeCharacterMovementComponent::ResetDynamicCapsule()
 {
-	if (!(bEnableDynamicCapsule && GeCharacterMovementCVars::bEnableDynamicCapusle))
+	if (!(bEnableDynamicCapsule && GeCharacterMovementCVars::bEnableDynCapsule))
 	{
 		return;
 	}
@@ -1090,7 +1099,7 @@ void UGeCharacterMovementComponent::ClearDynamicCapsuleState()
 
 void UGeCharacterMovementComponent::OnDynamicCapsuleBegin()
 {
-	if (!(bEnableDynamicCapsule && GeCharacterMovementCVars::bEnableDynamicCapusle))
+	if (!(bEnableDynamicCapsule && GeCharacterMovementCVars::bEnableDynCapsule))
 	{
 		return;
 	}
@@ -1135,7 +1144,7 @@ void UGeCharacterMovementComponent::OnDynamicCapsuleBegin()
 
 void UGeCharacterMovementComponent::OnDynamicCapsuleEnd()
 {
-	if (!(bEnableDynamicCapsule && GeCharacterMovementCVars::bEnableDynamicCapusle))
+	if (!(bEnableDynamicCapsule && GeCharacterMovementCVars::bEnableDynCapsule))
 	{
 		return;
 	}
@@ -1436,17 +1445,17 @@ void UGeCharacterMovementComponent::DisplayDebugForGame(float DeltaTime, bool bP
 	// All panels and labels are laid out in view space so they always face the local camera
 	const FRotator ViewRotation = GetMovementDebugViewRotation(CharacterOwner);
 
-	if (CVarAnimSkillMovement_DebugMovementShapes.GetValueOnGameThread())
+	if (CVarGeMove_DebugShapes.GetValueOnGameThread())
 	{
 		DrawMovementRotationRing(DebugDrawer, ViewRotation, DeltaTime);
 	}
 
-	if (CVarAnimSkillMovement_DebugMovementPanel.GetValueOnGameThread())
+	if (CVarGeMove_DebugPanel.GetValueOnGameThread())
 	{
 		DrawMovementStatePanel(DebugDrawer, ViewRotation);
 	}
 
-	if (CVarAnimSkillMovement_DebugMovementBars.GetValueOnGameThread())
+	if (CVarGeMove_DebugBars.GetValueOnGameThread())
 	{
 		DrawMovementBars(DebugDrawer, ViewRotation);
 	}
@@ -1459,7 +1468,7 @@ void UGeCharacterMovementComponent::DisplayDebugForGame(float DeltaTime, bool bP
 
 		DrawMovementHistoryTrail(DebugDrawer);
 
-		if (CVarAnimSkillMovement_DebugMovementGraph.GetValueOnGameThread())
+		if (CVarGeMove_DebugGraph.GetValueOnGameThread())
 		{
 			DrawMovementSpeedGraph(DebugDrawer, ViewRotation);
 		}
@@ -1472,7 +1481,7 @@ void UGeCharacterMovementComponent::CollectMovementDebugHistory()
 	// ring buffer evicts the existing path and the trail appears to vanish.
 	// Note: TAutoConsoleVariable defaults do not refresh under Live Coding — set the CVar
 	// explicitly (or restart the editor) after changing the registered default.
-	const int32 TrailCount = CVarAnimSkillMovement_DebugMovementHistory.GetValueOnGameThread();
+	const int32 TrailCount = CVarGeMove_DebugHistory.GetValueOnGameThread();
 	if (TrailCount > 0)
 	{
 		constexpr float MinSampleDistance = 5.f;
@@ -1493,7 +1502,7 @@ void UGeCharacterMovementComponent::CollectMovementDebugHistory()
 	}
 
 	// Speed samples for the history graph
-	if (CVarAnimSkillMovement_DebugMovementGraph.GetValueOnGameThread())
+	if (CVarGeMove_DebugGraph.GetValueOnGameThread())
 	{
 		UDrawDebugLibrary::AddToFloatHistoryArray(DebugSpeedHistory, GetCurrentVelocity().Size2D(), 200);
 	}
