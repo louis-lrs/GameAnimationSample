@@ -8,6 +8,8 @@
 #include "GeCharacterMovementReplication.h"
 #include "GeCharacterMovementComponent.generated.h"
 
+struct FDebugDrawer;
+
 // Enum to define the discrete stages of the capsule size during a jump
 UENUM(BlueprintType)
 enum class EJumpCapsuleStage : uint8
@@ -231,4 +233,39 @@ public:
 	void OnRep_ServerCapsuleStage();
 	
 #pragma endregion 
+
+#pragma region DebugDraw
+
+#if !(UE_BUILD_SHIPPING || UE_BUILD_TEST)
+private:
+	// Recent feet locations used to draw the movement trail (count driven by CVar)
+	TArray<FVector> DebugPositionHistory;
+
+	// Recent 2D speed samples used to draw the speed history graph
+	TArray<float> DebugSpeedHistory;
+
+	// Update the persistent history buffers (trail + speed samples)
+	void CollectMovementDebugHistory();
+
+	// Compact one-line summary printed on screen / to log (works on dedicated server as well)
+	void DrawMovementSummaryText(bool bPrintToScreen, bool bPrintToLog) const;
+
+	// Rotation ring around the capsule base: control/desired/actor rotations with delta arcs,
+	// plus velocity/acceleration/input arrows, capsule outline, view cone and floor normal
+	void DrawMovementRotationRing(const FDebugDrawer& Drawer, const FRotator& ViewRotation, float DeltaTime) const;
+
+	// Camera-facing key-value panel with color-coded movement state values
+	void DrawMovementStatePanel(const FDebugDrawer& Drawer, const FRotator& ViewRotation) const;
+
+	// Normalized progress bars (speed / acceleration / jump apex progress)
+	void DrawMovementBars(const FDebugDrawer& Drawer, const FRotator& ViewRotation) const;
+
+	// Trail of arrows through the recent feet locations
+	void DrawMovementHistoryTrail(const FDebugDrawer& Drawer) const;
+
+	// Speed history graph floating above the character
+	void DrawMovementSpeedGraph(const FDebugDrawer& Drawer, const FRotator& ViewRotation) const;
+#endif
+
+#pragma endregion
 };
