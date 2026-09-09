@@ -24,5 +24,11 @@
 				"Linux"
 			]
 		}
+	],
+	"Plugins": [
+		{
+			"Name": "RigVM",
+			"Enabled": true
+		}
 	]
 }

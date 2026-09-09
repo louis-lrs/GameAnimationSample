@@ -5,6 +5,8 @@
 #include "ElectronicNodes.h"
 #include "ENConnectionDrawingPolicy.h"
 #include "ENCommands.h"
+#include "Editor.h"
+#include "Engine/World.h"
 #include "NodeFactory.h"
 #include "Interfaces/IPluginManager.h"
 #include "Lib/HotPatch.h"
@@ -12,6 +14,9 @@
 #include "Patch/NodeFactoryPatch.h"
 #include "Popup/ENUpdatePopup.h"
 #include "ISettingsEditorModule.h"
+#include "RigVMEditorAsset.h"
+#include "RigVMHost.h"
+#include "Subsystems/AssetEditorSubsystem.h"
 
 #define LOCTEXT_NAMESPACE "FElectronicNodesModule"
 
@@ -53,6 +58,8 @@ void FElectronicNodesModule::StartupModule()
 	{
 		ENUpdatePopup::Register();
 	}
+
+	FEditorDelegates::PrePIEEnded.AddRaw(this, &FElectronicNodesModule::HandlePrePIEEnded);
 }
 
 #if ENGINE_MAJOR_VERSION == 4 && ENGINE_MINOR_VERSION <= 25
@@ -108,6 +115,53 @@ void FElectronicNodesModule::ReloadConfiguration(UObject* Object, struct FProper
 
 void FElectronicNodesModule::ShutdownModule()
 {
+	FEditorDelegates::PrePIEEnded.RemoveAll(this);
+}
+
+void FElectronicNodesModule::HandlePrePIEEnded(bool /*bIsSimulating*/)
+{
+	if (GEditor == nullptr)
+	{
+		return;
+	}
+
+	UAssetEditorSubsystem* AssetEditorSubsystem = GEditor->GetEditorSubsystem<UAssetEditorSubsystem>();
+	if (AssetEditorSubsystem == nullptr)
+	{
+		return;
+	}
+
+	// Drop PIE Control Rig debug targets before CleanupWorld. Engine wire / node paint
+	// will otherwise Cast the dying host and call GetRigVMExtendedExecuteContext().
+	for (UObject* EditedAsset : AssetEditorSubsystem->GetAllEditedAssets())
+	{
+		FRigVMEditorAssetInterfacePtr RigAsset;
+		if (EditedAsset && EditedAsset->Implements<URigVMEditorAssetInterface>())
+		{
+			RigAsset = FRigVMEditorAssetInterfacePtr(EditedAsset);
+		}
+		else
+		{
+			RigAsset = IRigVMEditorAssetInterface::GetInterfaceOuter(EditedAsset);
+		}
+
+		if (RigAsset.GetObject() == nullptr)
+		{
+			continue;
+		}
+
+		URigVMHost* Host = Cast<URigVMHost>(RigAsset->GetObjectBeingDebugged(true));
+		if (Host == nullptr)
+		{
+			continue;
+		}
+
+		const UWorld* World = Host->GetWorld();
+		if (World && (World->WorldType == EWorldType::PIE || World->IsPlayInEditor()))
+		{
+			RigAsset->SetObjectBeingDebugged(nullptr);
+		}
+	}
 }
 
 void FElectronicNodesModule::ToggleMasterActivation() const

@@ -20,6 +20,8 @@ public:
 	void ToggleMasterActivation() const;
 
 private:
+	void HandlePrePIEEnded(bool bIsSimulating);
+
 	UElectronicNodesSettings* ElectronicNodesSettings = nullptr;
 	FString PluginDirectory;
 	FString GlobalSettingsFile;

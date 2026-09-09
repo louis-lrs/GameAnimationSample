@@ -4,11 +4,12 @@
 
 #include "NodeFactoryPatch.h"
 
+#include "AnimationGraphFactory.h"
+#include "BlueprintConnectionDrawingPolicy.h"
 #include "ConnectionDrawingPolicy.h"
+#include "EdGraphSchema_K2.h"
 #include "EdGraphUtilities.h"
 #include "ENConnectionDrawingPolicy.h"
-#include "AnimationStateMachineSchema.h"
-#include "AnimationGraphFactory.h"
 
 FConnectionDrawingPolicy* FNodeFactoryPatch::CreateConnectionPolicy_Hook(const UEdGraphSchema* Schema, int32 InBackLayerID, int32 InFrontLayerID, float ZoomFactor, const FSlateRect& InClippingRect, FSlateWindowElementList& InDrawElements, UEdGraph* InGraphObj)
 {
@@ -21,7 +22,7 @@ FConnectionDrawingPolicy* FNodeFactoryPatch::CreateConnectionPolicy_Hook(const U
 		ConnectionDrawingPolicy = Schema->CreateConnectionDrawingPolicy(InBackLayerID, InFrontLayerID, ZoomFactor, InClippingRect, InDrawElements, InGraphObj);
 	}
 
-	if (!ConnectionDrawingPolicy && Schema->IsA(UAnimationStateMachineSchema::StaticClass()))
+	if (!ConnectionDrawingPolicy)
 	{
 		const TSharedPtr<FAnimationGraphPinConnectionFactory> AnimationGraphFactory = MakeShareable(new FAnimationGraphPinConnectionFactory);
 		ConnectionDrawingPolicy = AnimationGraphFactory->CreateConnectionPolicy(Schema, InBackLayerID, InFrontLayerID, ZoomFactor, InClippingRect, InDrawElements, InGraphObj);
@@ -29,7 +30,14 @@ FConnectionDrawingPolicy* FNodeFactoryPatch::CreateConnectionPolicy_Hook(const U
 
 	if (!ConnectionDrawingPolicy)
 	{
-		ConnectionDrawingPolicy = new FConnectionDrawingPolicy(InBackLayerID, InFrontLayerID, ZoomFactor, InClippingRect, InDrawElements);
+		if (Schema->IsA(UEdGraphSchema_K2::StaticClass()))
+		{
+			ConnectionDrawingPolicy = new FKismetConnectionDrawingPolicy(InBackLayerID, InFrontLayerID, ZoomFactor, InClippingRect, InDrawElements, InGraphObj);
+		}
+		else
+		{
+			ConnectionDrawingPolicy = new FConnectionDrawingPolicy(InBackLayerID, InFrontLayerID, ZoomFactor, InClippingRect, InDrawElements);
+		}
 	}
 
 	return ConnectionDrawingPolicy;

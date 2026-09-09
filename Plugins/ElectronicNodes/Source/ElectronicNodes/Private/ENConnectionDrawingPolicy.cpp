@@ -7,39 +7,52 @@
 #include "Animation/AnimBlueprint.h"
 #include "Animation/AnimBlueprintGeneratedClass.h"
 #include "AnimationGraphSchema.h"
+#include "AnimationTransitionSchema.h"
 #include "BlueprintEditorSettings.h"
+#include "EdGraph/RigVMEdGraphSchema.h"
 #include "ENPathDrawer.h"
 #include "SGraphPanel.h"
 #include "Framework/Application/SlateApplication.h"
 #include "Kismet2/BlueprintEditorUtils.h"
 #include "MaterialGraph/MaterialGraphSchema.h"
 #include "Policies/ENBehaviorTreeConnectionDrawingPolicy.h"
+#include "Policies/ENRigVMConnectionDrawingPolicy.h"
 
 
 FConnectionDrawingPolicy* FENConnectionDrawingPolicyFactory::CreateConnectionPolicy(const class UEdGraphSchema* Schema, int32 InBackLayerID, int32 InFrontLayerID, float ZoomFactor, const class FSlateRect& InClippingRect, class FSlateWindowElementList& InDrawElements, class UEdGraph* InGraphObj) const
 {
 	const UElectronicNodesSettings& ElectronicNodesSettings = *GetDefault<UElectronicNodesSettings>();
-	if (!ElectronicNodesSettings.MasterActivate)
-	{
-		return nullptr;
-	}
-
 	const FName ClassName = Schema->GetClass()->GetFName();
 
-	if (ElectronicNodesSettings.DisplaySchemaName)
+	if (ElectronicNodesSettings.DisplaySchemaName && ElectronicNodesSettings.MasterActivate)
 	{
 		UE_LOG(LogTemp, Log, TEXT("[EN] %s"), *ClassName.ToString());
 	}
 
-	if (ElectronicNodesSettings.ActivateOnAnimation)
+	// Always wrap RigVM / Control Rig graphs when this factory is consulted (HotPatch path).
+	// Engine FRigVMEdGraphConnectionDrawingPolicy reads a dying PIE host during teardown.
+	if (Schema->IsA(URigVMEdGraphSchema::StaticClass()))
 	{
-		if (ClassName == "AnimationTransitionSchema" ||
-			ClassName == "AnimationGraphSchema" ||
-			ClassName == "AnimationStateGraphSchema")
+		const bool bDrawElectronicNodes = ElectronicNodesSettings.MasterActivate && ElectronicNodesSettings.ActivateOnControlRig;
+		return new FENRigVMConnectionDrawingPolicy(
+			InBackLayerID, InFrontLayerID, ZoomFactor, InClippingRect, InDrawElements, InGraphObj, bDrawElectronicNodes);
+	}
+
+	// Animation schemas inherit UEdGraphSchema_K2. They must not fall through to ActivateOnBlueprint.
+	const bool bIsAnimationSchema = Schema->IsA(UAnimationGraphSchema::StaticClass()) ||
+		Schema->IsA(UAnimationTransitionSchema::StaticClass());
+	if (bIsAnimationSchema)
+	{
+		if (ElectronicNodesSettings.MasterActivate && ElectronicNodesSettings.ActivateOnAnimation)
 		{
-			// UE binary builds do not export FAnimGraphConnectionDrawingPolicy symbols; use EN policy directly.
 			return new FENConnectionDrawingPolicy(InBackLayerID, InFrontLayerID, ZoomFactor, InClippingRect, InDrawElements, InGraphObj);
 		}
+		return nullptr;
+	}
+
+	if (!ElectronicNodesSettings.MasterActivate)
+	{
+		return nullptr;
 	}
 
 	if (ElectronicNodesSettings.ActivateOnVoxelPlugin && ClassName == "VoxelGraphSchema")
@@ -55,12 +68,6 @@ FConnectionDrawingPolicy* FENConnectionDrawingPolicyFactory::CreateConnectionPol
 	if (ElectronicNodesSettings.ActivateOnBehaviorTree && ClassName == "EdGraphSchema_BehaviorTree")
 	{
 		return new FENBehaviorTreeConnectionDrawingPolicy(InBackLayerID, InFrontLayerID, ZoomFactor, InClippingRect, InDrawElements, InGraphObj);
-	}
-
-	// UE 5.8+: ControlRigGraphSchema no longer exposes FControlRigConnectionDrawingPolicy; style wires via FEN policy.
-	if (ElectronicNodesSettings.ActivateOnControlRig && ClassName == "ControlRigGraphSchema")
-	{
-		return new FENConnectionDrawingPolicy(InBackLayerID, InFrontLayerID, ZoomFactor, InClippingRect, InDrawElements, InGraphObj);
 	}
 
 	if (ElectronicNodesSettings.ActivateOnReferenceViewer && ClassName == "ReferenceViewerSchema")
