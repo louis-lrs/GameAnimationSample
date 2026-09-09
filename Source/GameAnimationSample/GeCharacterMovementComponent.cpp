@@ -97,11 +97,11 @@ namespace GeCharacterMovementCVars
 		     "  4 = TwoWallSlide (same as 3, enabled separately)"));
 
 	/**
-	 * 模式能力查询函数 —— 扩展新模式时只需修改这里，调用处无需改动。
+	 * ???????? ?? ?????????????????????
 	 *
-	 * SlideMode_SkipsFixup        : 是否跳过 NormalZ<0 fixup 块
-	 * SlideMode_UsesTwoWall       : 是否启用 TwoWallSlide SlideDelta 修正
-	 * SlideMode_PreservesHorizSpeed: 是否在 TwoWallSlide 中保留水平速度
+	 * SlideMode_SkipsFixup        : ???? NormalZ<0 fixup ?
+	 * SlideMode_UsesTwoWall       : ???? TwoWallSlide SlideDelta ??
+	 * SlideMode_PreservesHorizSpeed: ??? TwoWallSlide ???????
 	 */
 	static bool SlideMode_SkipsFixup(int32 Mode)
 	{
@@ -207,17 +207,10 @@ void UGeCharacterMovementComponent::TickComponent(float DeltaTime, ELevelTick Ti
 		return;
 	}
 	
-	DisplayDebugForGame(DeltaTime);
-	
-	// Debug dynamic capsule info
-	const int32 theDebugDynamicCapsule = CVarGeMove_DebugDynCapsule.GetValueOnAnyThread();
-	if (ShouldEnableDebugForRole(theDebugDynamicCapsule, CharacterOwner))
-	{
-		const FString DebugInfo = GetDynamicCapsuleDebugInfo();
-		// Use unique key by appending suffix to avoid conflict with DisplayDebugForGame
-		const FString theObjectHash = FString::Printf(TEXT("%u_DynamicCapsule"), GetTypeHash(FObjectKey{this}));
-		UKismetSystemLibrary::PrintString(this, DebugInfo, true, false, FLinearColor::White, 0.f, FName(*theObjectHash));
-	}
+#if !(UE_BUILD_SHIPPING || UE_BUILD_TEST)
+	DrawMovementDebug(DeltaTime);
+	DrawDynamicCapsuleDebug();
+#endif
 	
 	// if (CharacterOwner->GetLocalRole() == ROLE_SimulatedProxy)
 	// {
@@ -386,7 +379,7 @@ void UGeCharacterMovementComponent::ServerMove_PerformMovement(const FCharacterN
 
 void UGeCharacterMovementComponent::OnApplyJumpTimeData(const FGeCharacterNetworkMoveData& GeMoveData)
 {
-	// 从 FFloat16 直接获取浮点值
+	// ? FFloat16 ???????
 	const float ReceivedActualJumpApexTime = GeMoveData.SavedActualJumpApexTime.GetFloat();
 	const float OldActualJumpApexTime = ActualJumpApexTime;
 	if (ReceivedActualJumpApexTime > UE_KINDA_SMALL_NUMBER)
@@ -1564,20 +1557,6 @@ namespace UE::GeMovement::MovementDebug
 		OutCameraRotation = (FocusLocation - OutCameraLocation).ToOrientationRotator();
 	}
 
-	// DrawDebugString glyphs live in the local YZ plane. Point local X along the camera-to-text
-	// view direction and constrain local Z with camera Up so the text faces the screen
-	// without mirroring when the camera has Pitch/Roll.
-	static FRotator MakeCameraFacingTextRotation(
-		const FVector& TextLocation,
-		const FVector& CameraLocation,
-		const FRotator& CameraRotation)
-	{
-		const FVector CameraToText = (TextLocation - CameraLocation).GetSafeNormal(
-			UE_KINDA_SMALL_NUMBER,
-			CameraRotation.Vector());
-		const FVector CameraUp = CameraRotation.RotateVector(FVector::UpVector);
-		return FRotationMatrix::MakeFromXZ(CameraToText, CameraUp).Rotator();
-	}
 }
 
 // Returns the view rotation used to organize the camera-facing debug layout.
@@ -1604,13 +1583,14 @@ static FRotator GetMovementDebugViewRotation(const ACharacter* Character)
 	return Character->GetBaseAimRotation();
 }
 
-void UGeCharacterMovementComponent::DisplayDebugForGame(float DeltaTime, bool bPrintToScreen, bool bPrintToLog)
+void UGeCharacterMovementComponent::DrawMovementDebug(float DeltaTime)
 {
 	const int32 DebugMode = CVarGeMove_Debug.GetValueOnGameThread();
 	if (!ShouldEnableDebugForRole(DebugMode, CharacterOwner))
 	{
 		DebugPositionHistory.Reset();
 		DebugSpeedHistory.Reset();
+		DebugGraphYMax = 0.f;
 		bHasDebugCacheLastLocation = false;
 		return;
 	}
@@ -1621,21 +1601,219 @@ void UGeCharacterMovementComponent::DisplayDebugForGame(float DeltaTime, bool bP
 	{
 		DebugPositionHistory.Reset();
 		DebugSpeedHistory.Reset();
+		DebugGraphYMax = 0.f;
 		bHasDebugCacheLastLocation = false;
 		LastDrawnStyle = Style;
 	}
 
 	if (Style <= 0)
 	{
-		DrawLegacyMovementDebug(DeltaTime, bPrintToScreen, bPrintToLog);
+		DrawMovementDebugLegacy(DeltaTime, true, false);
 	}
 	else
 	{
-		DrawMovementDataShapeDebug(DeltaTime);
+		DrawMovementDebugShape(DeltaTime);
 	}
 }
 
-void UGeCharacterMovementComponent::DrawLegacyMovementDebug(float DeltaTime, bool bPrintToScreen, bool bPrintToLog)
+void UGeCharacterMovementComponent::DrawDynamicCapsuleDebug()
+{
+	const int32 DebugMode = CVarGeMove_DebugDynCapsule.GetValueOnGameThread();
+	if (!ShouldEnableDebugForRole(DebugMode, CharacterOwner))
+	{
+		return;
+	}
+
+	UWorld* World = GetWorld();
+	UCapsuleComponent* Capsule = CharacterOwner ? CharacterOwner->GetCapsuleComponent() : nullptr;
+	if (!World || !Capsule)
+	{
+		return;
+	}
+
+	const FVector CapsuleLocation = Capsule->GetComponentLocation();
+	const float CapsuleHalfHeight = Capsule->GetScaledCapsuleHalfHeight();
+	const FVector ActorDirection = FRotator(0.0f, CharacterOwner->GetActorRotation().Yaw, 0.0f).Vector();
+
+	FDebugDrawer WorldDrawer = FDebugDrawer::MakeDebugDrawer(World);
+	FDebugDrawer VLogDrawer = FDebugDrawer::MakeVisualLoggerDebugDrawer(
+		this,
+		LogGeCharacterMovement,
+		ELogVerbosity::Verbose,
+		false,
+		false);
+	FDebugDrawer DebugDrawer = FDebugDrawer::MakeMergedDebugDrawer({WorldDrawer, VLogDrawer});
+
+	auto GetNetModeName = [](ENetMode NetMode) -> const TCHAR*
+	{
+		switch (NetMode)
+		{
+		case NM_Standalone: return TEXT("Standalone");
+		case NM_DedicatedServer: return TEXT("DedicatedServer");
+		case NM_ListenServer: return TEXT("ListenServer");
+		case NM_Client: return TEXT("Client");
+		default: return TEXT("Unknown");
+		}
+	};
+
+	auto GetRoleName = [](ENetRole Role) -> const TCHAR*
+	{
+		switch (Role)
+		{
+		case ROLE_Authority: return TEXT("Authority");
+		case ROLE_AutonomousProxy: return TEXT("AutonomousProxy");
+		case ROLE_SimulatedProxy: return TEXT("SimulatedProxy");
+		case ROLE_None: return TEXT("None");
+		default: return TEXT("Unknown");
+		}
+	};
+
+	auto YesNo = [](bool bValue) -> const TCHAR*
+	{
+		return bValue ? TEXT("Yes") : TEXT("No");
+	};
+
+	const FLinearColor ActiveColor(0.25f, 0.9f, 0.3f);
+	const FLinearColor IdleColor(0.55f, 0.55f, 0.55f);
+	const FLinearColor WarnColor(1.0f, 0.75f, 0.2f);
+	const FLinearColor PendingColor(1.0f, 0.55f, 0.05f);
+
+	FVector TextCameraLocation = FVector::ZeroVector;
+	FRotator TextCameraRotation = FRotator::ZeroRotator;
+	const FVector TextAnchorBase = CapsuleLocation + FVector(0.0f, 0.0f, CapsuleHalfHeight + 20.0f);
+	if (!UE::GeMovement::MovementDebug::TryGetDebugViewPoint(World, TextCameraLocation, TextCameraRotation))
+	{
+		UE::GeMovement::MovementDebug::GetFallbackDebugViewPoint(
+			TextAnchorBase,
+			ActorDirection,
+			TextCameraLocation,
+			TextCameraRotation);
+	}
+
+	const bool bMovementShapeDebugActive =
+		CVarGeMove_DebugStyle.GetValueOnGameThread() > 0
+		&& ShouldEnableDebugForRole(CVarGeMove_Debug.GetValueOnGameThread(), CharacterOwner);
+
+	const float TextDistToCamera = FVector::Dist(TextAnchorBase, TextCameraLocation);
+	const float TextHeight = FMath::Clamp(TextDistToCamera / 100.0f, 3.0f, 80.0f) * 1.9f;
+	const FVector CameraRight = TextCameraRotation.RotateVector(FVector::RightVector);
+	const FVector TextLineDown = -TextCameraRotation.RotateVector(FVector::UpVector);
+
+	FDrawDebugStringSettings StringSettings;
+	StringSettings.Height = TextHeight;
+	StringSettings.bMonospaced = true;
+	StringSettings.WidthScale = 1.0f;
+	StringSettings.HeightScale = 1.0f;
+	StringSettings.LineSpacing = 1.0f;
+	StringSettings.CharacterSpacing = 0.0f;
+
+	// Glyphs grow along +camera right. When the shape panel occupies the right side,
+	// park this panel far enough left that its right edge stays off the capsule.
+	const FString WidthSample = TEXT("S1=Yes (T0.00 R0.00 O0.0)  S2=Yes (T0.00 R0.00 O0.0)");
+	const float PanelWidth = UDrawDebugLibrary::DrawDebugStringDimensions(WidthSample, StringSettings).Y;
+	const FVector TextAnchor = bMovementShapeDebugActive
+		? (TextAnchorBase + CameraRight * -(PanelWidth + TextHeight * 2.0f) + TextLineDown * (TextHeight * 0.5f))
+		: (TextAnchorBase + CameraRight * (TextHeight * 3.5f));
+	// Glyph strokes live in local YZ. Use the camera rotator so Y/Z sit on the screen plane.
+	const FRotator TextFaceRotation = TextCameraRotation;
+
+	const float TextLineStep = TextHeight * 1.45f;
+	int32 TextLineIndex = 0;
+	auto DrawColoredTextLine = [&](const FLinearColor& LineColor, const FString& LineText)
+	{
+		FDrawDebugLineStyle LineTextStyle;
+		LineTextStyle.LineType = EDrawDebugLineType::Solid;
+		LineTextStyle.Thickness = 0.0f;
+		LineTextStyle.Color = LineColor;
+		UDrawDebugLibrary::DrawDebugString(
+			DebugDrawer,
+			LineText,
+			TextAnchor + TextLineDown * (TextLineStep * static_cast<float>(TextLineIndex++)),
+			TextFaceRotation,
+			LineTextStyle,
+			false,
+			StringSettings);
+	};
+
+	const float CurrentHalfHeight = Capsule->GetUnscaledCapsuleHalfHeight();
+	const float DefaultHalfHeight = GetDefaultCapsuleHalfHeight();
+	const float CapsuleRatio = DefaultHalfHeight > 0.0f ? (CurrentHalfHeight / DefaultHalfHeight) : 0.0f;
+	const bool bCapsuleShrunk = CapsuleRatio < 0.99f;
+	const USkeletalMeshComponent* OwnerMesh = CharacterOwner->GetMesh();
+	const float DefaultMeshZ = GetDefaultMeshZ();
+	const float CurrentMeshZ = OwnerMesh ? OwnerMesh->GetRelativeLocation().Z : DefaultMeshZ;
+	const bool bHasMeshTarget = TargetMeshZOffset.IsSet();
+	const float TargetMeshZ = bHasMeshTarget ? TargetMeshZOffset.GetValue() : CurrentMeshZ;
+
+	if (!bMovementShapeDebugActive)
+	{
+		DrawColoredTextLine(FLinearColor(0.4f, 0.85f, 1.0f), FString::Printf(
+			TEXT("DynCapsule  %s/%s  Frame=%llu"),
+			GetNetModeName(World->GetNetMode()),
+			GetRoleName(CharacterOwner->GetLocalRole()),
+			static_cast<uint64>(GFrameCounter)));
+	}
+	else
+	{
+		DrawColoredTextLine(FLinearColor(0.4f, 0.85f, 1.0f), TEXT("DynCapsule"));
+	}
+
+	const FLinearColor StatusColor = bPendingCapsuleRestore ? PendingColor
+		: (bIsDynamicCapsuleActive || bEnableDynamicCapsule) ? ActiveColor
+		: IdleColor;
+	DrawColoredTextLine(StatusColor, FString::Printf(
+		TEXT("Enabled=%s  Active=%s  PendingRestore=%s"),
+		YesNo(bEnableDynamicCapsule),
+		YesNo(bIsDynamicCapsuleActive),
+		YesNo(bPendingCapsuleRestore)));
+	DrawColoredTextLine(CurrentCapsuleStage == EJumpCapsuleStage::FullSize ? ActiveColor : WarnColor, FString::Printf(
+		TEXT("Stage=%s  Max=%s  Server=%s"),
+		*UEnum::GetDisplayValueAsText(CurrentCapsuleStage).ToString(),
+		*UEnum::GetDisplayValueAsText(MaxReachedStage).ToString(),
+		*UEnum::GetDisplayValueAsText(ServerCapsuleStage).ToString()));
+	if (!bMovementShapeDebugActive || ActualJumpApexTime > 0.0f)
+	{
+		DrawColoredTextLine(IsFalling() ? FLinearColor(0.2f, 1.0f, 0.45f) : IdleColor, FString::Printf(
+			TEXT("Jump T=%.3f  Expected=%.3f  Actual=%.3f"),
+			AccumulatedJumpTime,
+			ExpectedJumpApexTime,
+			ActualJumpApexTime));
+	}
+	DrawColoredTextLine(bCapsuleShrunk ? WarnColor : ActiveColor, FString::Printf(
+		TEXT("Capsule HH=%.1f / %.1f  Expected=%.1f  Ratio=%.0f%%"),
+		CurrentHalfHeight,
+		DefaultHalfHeight,
+		ExpectedCapsuleHalfHeight,
+		CapsuleRatio * 100.0f));
+	DrawColoredTextLine(bHasMeshTarget ? PendingColor : IdleColor, FString::Printf(
+		TEXT("MeshZ Target=%s  Current=%.1f  Default=%.1f"),
+		bHasMeshTarget ? *FString::Printf(TEXT("%.1f"), TargetMeshZ) : TEXT("None"),
+		CurrentMeshZ,
+		DefaultMeshZ));
+	if (!bMovementShapeDebugActive)
+	{
+		DrawColoredTextLine(FLinearColor::White, FString::Printf(
+			TEXT("Mode=%s  Falling=%s  RootMotion=%s"),
+			*GetMovementName(),
+			YesNo(IsFalling()),
+			YesNo(HasRootMotionSources())));
+	}
+	DrawColoredTextLine(FLinearColor(1.0f, 0.58f, 0.35f), FString::Printf(
+		TEXT("S1=%s (T%.2f R%.2f O%.1f)  S2=%s (T%.2f R%.2f O%.1f)"),
+		YesNo(bEnableStage1),
+		Stage1Config.Threshold,
+		Stage1Config.ShrinkRatio,
+		Stage1Config.CapsuleOffset,
+		YesNo(bEnableStage2),
+		Stage2Config.Threshold,
+		Stage2Config.ShrinkRatio,
+		Stage2Config.CapsuleOffset));
+	DrawColoredTextLine(FLinearColor(1.0f, 0.58f, 0.35f), FString::Printf(
+		TEXT("Interp=%.1f"),
+		InterpMeshSpeed));
+}
+
+void UGeCharacterMovementComponent::DrawMovementDebugLegacy(float DeltaTime, bool bPrintToScreen, bool bPrintToLog)
 {
 	if (!HasValidData())
 	{
@@ -1643,7 +1821,7 @@ void UGeCharacterMovementComponent::DrawLegacyMovementDebug(float DeltaTime, boo
 	}
 
 	// Compact one-line summary works everywhere, including dedicated servers (log parity)
-	DrawMovementSummaryText(bPrintToScreen, bPrintToLog);
+	DrawMovementDebugSummary(bPrintToScreen, bPrintToLog);
 
 	// World-space drawing is meaningless without a local viewport
 	UWorld* World = GetWorld();
@@ -1664,17 +1842,17 @@ void UGeCharacterMovementComponent::DrawLegacyMovementDebug(float DeltaTime, boo
 
 	if (CVarGeMove_DebugShapes.GetValueOnGameThread())
 	{
-		DrawMovementRotationRing(DebugDrawer, ViewRotation, DeltaTime);
+		DrawMovementDebugRotationRing(DebugDrawer, ViewRotation, DeltaTime);
 	}
 
 	if (CVarGeMove_DebugPanel.GetValueOnGameThread())
 	{
-		DrawMovementStatePanel(DebugDrawer, ViewRotation);
+		DrawMovementDebugStatePanel(DebugDrawer, ViewRotation);
 	}
 
 	if (CVarGeMove_DebugBars.GetValueOnGameThread())
 	{
-		DrawMovementBars(DebugDrawer, ViewRotation);
+		DrawMovementDebugBars(DebugDrawer, ViewRotation);
 	}
 
 	// History-based visualizations only track the locally controlled character:
@@ -1683,11 +1861,11 @@ void UGeCharacterMovementComponent::DrawLegacyMovementDebug(float DeltaTime, boo
 	{
 		CollectMovementDebugHistory();
 
-		DrawMovementHistoryTrail(DebugDrawer);
+		DrawMovementDebugTrail(DebugDrawer);
 
 		if (CVarGeMove_DebugGraph.GetValueOnGameThread())
 		{
-			DrawMovementSpeedGraph(DebugDrawer, ViewRotation);
+			DrawMovementDebugGraph(DebugDrawer, ViewRotation);
 		}
 	}
 }
@@ -1701,7 +1879,7 @@ void UGeCharacterMovementComponent::CollectMovementDebugHistory()
 	const int32 TrailCount = CVarGeMove_DebugHistory.GetValueOnGameThread();
 	if (TrailCount > 0)
 	{
-		constexpr float MinSampleDistance = 5.f;
+		constexpr float MinSampleDistance = 2.f;
 		const FVector FeetLocation = GetActorFeetLocation();
 		if (DebugPositionHistory.IsEmpty()
 			|| FVector::DistSquared(DebugPositionHistory.Last(), FeetLocation) > FMath::Square(MinSampleDistance))
@@ -1726,10 +1904,11 @@ void UGeCharacterMovementComponent::CollectMovementDebugHistory()
 	else if (!DebugSpeedHistory.IsEmpty())
 	{
 		DebugSpeedHistory.Reset();
+		DebugGraphYMax = 0.f;
 	}
 }
 
-void UGeCharacterMovementComponent::DrawMovementSummaryText(bool bPrintToScreen, bool bPrintToLog) const
+void UGeCharacterMovementComponent::DrawMovementDebugSummary(bool bPrintToScreen, bool bPrintToLog) const
 {
 	USkeletalMeshComponent* CharacterMesh = CharacterOwner->GetMesh();
 	if (!CharacterMesh)
@@ -1761,7 +1940,7 @@ void UGeCharacterMovementComponent::DrawMovementSummaryText(bool bPrintToScreen,
 	UKismetSystemLibrary::PrintString(this, theDebugString, bPrintToScreen, bPrintToLog, FLinearColor::White, 0.f, FName(*theObjectHash));
 }
 
-void UGeCharacterMovementComponent::DrawMovementRotationRing(const FDebugDrawer& Drawer, const FRotator& ViewRotation, float DeltaTime) const
+void UGeCharacterMovementComponent::DrawMovementDebugRotationRing(const FDebugDrawer& Drawer, const FRotator& ViewRotation, float DeltaTime) const
 {
 	const FVector CapsuleLocation = UpdatedComponent->GetComponentLocation();
 	const FRotator CapsuleRotation = UpdatedComponent->GetComponentRotation();
@@ -1959,7 +2138,7 @@ void UGeCharacterMovementComponent::DrawMovementRotationRing(const FDebugDrawer&
 	DrawLabelRow(FString::Printf(TEXT("Input       (%6.1f) %.2f"), InputYaw, InputVector.Size()), InputColor);
 }
 
-void UGeCharacterMovementComponent::DrawMovementStatePanel(const FDebugDrawer& Drawer, const FRotator& ViewRotation) const
+void UGeCharacterMovementComponent::DrawMovementDebugStatePanel(const FDebugDrawer& Drawer, const FRotator& ViewRotation) const
 {
 	FDrawDebugStringSettings StringSettings;
 	StringSettings.Height = 7.f;
@@ -2078,7 +2257,7 @@ void UGeCharacterMovementComponent::DrawMovementStatePanel(const FDebugDrawer& D
 	}
 }
 
-void UGeCharacterMovementComponent::DrawMovementBars(const FDebugDrawer& Drawer, const FRotator& ViewRotation) const
+void UGeCharacterMovementComponent::DrawMovementDebugBars(const FDebugDrawer& Drawer, const FRotator& ViewRotation) const
 {
 	// Kept below the speed graph (graph bottom sits at +65 in view space)
 	const FVector BarBaseLocation = UpdatedComponent->GetComponentLocation() + ViewRotation.RotateVector(FVector(0.f, -110.f, 25.f));
@@ -2131,7 +2310,7 @@ void UGeCharacterMovementComponent::DrawMovementBars(const FDebugDrawer& Drawer,
 	}
 }
 
-void UGeCharacterMovementComponent::DrawMovementHistoryTrail(const FDebugDrawer& Drawer) const
+void UGeCharacterMovementComponent::DrawMovementDebugTrail(const FDebugDrawer& Drawer) const
 {
 	if (DebugPositionHistory.Num() < 2)
 	{
@@ -2139,21 +2318,30 @@ void UGeCharacterMovementComponent::DrawMovementHistoryTrail(const FDebugDrawer&
 	}
 
 	FDrawDebugLineStyle TrailStyle;
-	TrailStyle.Thickness = 1.f;
+	TrailStyle.Thickness = 0.5f;
 	TrailStyle.Color = FLinearColor(0.f, 1.f, 1.f);
 
 	FDrawDebugArrowSettings TrailArrowSettings;
-	TrailArrowSettings.ArrowHeadEndSize = 5.f;
+	TrailArrowSettings.ArrowHeadEndSize = 2.f;
 	TrailArrowSettings.ArrowHeadEndType = EDrawDebugArrowHead::Simple;
 
 	for (int32 Index = 1; Index < DebugPositionHistory.Num(); ++Index)
 	{
-		UDrawDebugLibrary::DrawDebugArrow(Drawer, DebugPositionHistory[Index - 1], DebugPositionHistory[Index],
-			TrailStyle, true, TrailArrowSettings);
+		const FVector& SegmentStart = DebugPositionHistory[Index - 1];
+		const FVector& SegmentEnd = DebugPositionHistory[Index];
+		// Arrowheads swallow short steps; keep those as a thin line only.
+		if (FVector::DistSquared(SegmentStart, SegmentEnd) < FMath::Square(TrailArrowSettings.ArrowHeadEndSize * 2.f))
+		{
+			UDrawDebugLibrary::DrawDebugLine(Drawer, SegmentStart, SegmentEnd, TrailStyle, true);
+		}
+		else
+		{
+			UDrawDebugLibrary::DrawDebugArrow(Drawer, SegmentStart, SegmentEnd, TrailStyle, true, TrailArrowSettings);
+		}
 	}
 }
 
-void UGeCharacterMovementComponent::DrawMovementSpeedGraph(const FDebugDrawer& Drawer, const FRotator& ViewRotation) const
+void UGeCharacterMovementComponent::DrawMovementDebugGraph(const FDebugDrawer& Drawer, const FRotator& ViewRotation) const
 {
 	if (DebugSpeedHistory.Num() < 2)
 	{
@@ -2163,7 +2351,13 @@ void UGeCharacterMovementComponent::DrawMovementSpeedGraph(const FDebugDrawer& D
 	TArray<float> XValues;
 	UDrawDebugLibrary::MakeLinearlySpacedFloatArray(XValues, 0.f, 1.f, DebugSpeedHistory.Num());
 
-	const float MaxYValue = FMath::Max(GetMaxSpeed() * 1.2f, 100.f);
+	// Sprint in this project writes MaxWalkSpeed at runtime, so a live max of the
+	// CMC caps still moves. Latch the highest cap / observed Speed2D and never shrink.
+	const float ConfiguredMax = FMath::Max(
+		FMath::Max3(MaxWalkSpeed, MaxWalkSpeedCrouched, MaxSwimSpeed),
+		FMath::Max(MaxFlySpeed, MaxCustomMovementSpeed));
+	DebugGraphYMax = FMath::Max3(DebugGraphYMax, ConfiguredMax, static_cast<float>(GetCurrentVelocity().Size2D()));
+	const float MaxYValue = FMath::Max(DebugGraphYMax, 100.f);
 	const FVector GraphLocation = UpdatedComponent->GetComponentLocation() + ViewRotation.RotateVector(FVector(0.f, -110.f, 65.f));
 
 	FDrawDebugLineStyle TextStyle;
@@ -2179,7 +2373,11 @@ void UGeCharacterMovementComponent::DrawMovementSpeedGraph(const FDebugDrawer& D
 	PlotStyle.Color = FLinearColor::Green;
 
 	FDrawDebugGraphAxesSettings AxesSettings;
-	AxesSettings.Title = FString::Printf(TEXT("Speed2D %.0f / %.0f"), GetCurrentVelocity().Size2D(), GetMaxSpeed());
+	AxesSettings.Title = FString::Printf(
+		TEXT("Speed2D %.0f / %.0f  YMax=%.0f"),
+		GetCurrentVelocity().Size2D(),
+		GetMaxSpeed(),
+		MaxYValue);
 	AxesSettings.TitleSettings.Height = 6.f;
 	AxesSettings.TitleSettings.bMonospaced = true;
 	AxesSettings.AxisLabelSettings.Height = 4.5f;
@@ -2189,7 +2387,7 @@ void UGeCharacterMovementComponent::DrawMovementSpeedGraph(const FDebugDrawer& D
 		0.f, 1.f, 0.f, MaxYValue, 60.f, 40.f, TextStyle, AxesStyle, PlotStyle, false, AxesSettings);
 }
 
-void UGeCharacterMovementComponent::DrawMovementDataShapeDebug(float DeltaTime)
+void UGeCharacterMovementComponent::DrawMovementDebugShape(float DeltaTime)
 {
 	const int32 DebugMode = CVarGeMove_Debug.GetValueOnGameThread();
 	if (!ShouldEnableDebugForRole(DebugMode, CharacterOwner))
@@ -2433,11 +2631,8 @@ void UGeCharacterMovementComponent::DrawMovementDataShapeDebug(float DeltaTime)
 		// Offset along camera right so text does not sit on the capsule or facing arrows.
 		const FVector TextRightOffset = TextCameraRotation.RotateVector(FVector::RightVector) * (TextHeight * 3.5f);
 		const FVector TextAnchor = TextAnchorBase + TextRightOffset;
-		const FRotator TextFaceRotation =
-			UE::GeMovement::MovementDebug::MakeCameraFacingTextRotation(
-				TextAnchor,
-				TextCameraLocation,
-				TextCameraRotation);
+		// Glyph strokes live in local YZ. Use the camera rotator so Y/Z sit on the screen plane.
+		const FRotator TextFaceRotation = TextCameraRotation;
 
 		FDrawDebugStringSettings ShapeStringSettings;
 		ShapeStringSettings.Height = TextHeight;
@@ -2536,12 +2731,6 @@ void UGeCharacterMovementComponent::DrawMovementDataShapeDebug(float DeltaTime)
 				ExpectedJumpApexTime));
 		}
 	}
-}
-
-#else
-
-void UGeCharacterMovementComponent::DisplayDebugForGame(float, bool, bool)
-{
 }
 
 #endif // !(UE_BUILD_SHIPPING || UE_BUILD_TEST)
@@ -2700,7 +2889,7 @@ float UGeCharacterMovementComponent::SlideAlongSurface(const FVector& Delta, flo
 			const FString NewWallActor = GetNameSafe(Hit.GetActor());
 			const float CosAngle = FMath::Clamp(OldHitNormal | NewHitNormal, -1.f, 1.f);
 			const float AngleDeg = FMath::RadiansToDegrees(FMath::Acos(CosAngle));
-			UE_LOG_ENHANCED(LogGeCharacterMovement, Verbose, this, TEXT("%hs Mode=%d, Angle=%.2f°, OldHitNormal=%s, NewHitNormal=%s, SlideDelta=%s, bNearlyZero=%d, bForward=%d"),
+			UE_LOG_ENHANCED(LogGeCharacterMovement, Verbose, this, TEXT("%hs Mode=%d, Angle=%.2f?, OldHitNormal=%s, NewHitNormal=%s, SlideDelta=%s, bNearlyZero=%d, bForward=%d"),
 					__FUNCTION__, SlideFixMode, AngleDeg, *OldHitNormal.ToCompactString(), *NewHitNormal.ToCompactString(), *SlideDelta.ToCompactString(), bNearlyZero, bForward);
 			
 			if (GeCharacterMovementCVars::SlideMode_UsesTwoWall(SlideFixMode))
@@ -2722,7 +2911,7 @@ float UGeCharacterMovementComponent::SlideAlongSurface(const FVector& Delta, flo
 					{
 						// Expected direction: Delta projected onto the floor plane.
 						FVector ExpectDir = FVector::VectorPlaneProject(Delta, OldHitNormal);
-						// Pick whichever ±89° rotation around the wall normal aligns better
+						// Pick whichever ?89? rotation around the wall normal aligns better
 						// with the expected direction.
 						FVector LeftDir  = Delta.RotateAngleAxis(-89.f, NewHitNormal);
 						FVector RightDir = Delta.RotateAngleAxis( 89.f, NewHitNormal);

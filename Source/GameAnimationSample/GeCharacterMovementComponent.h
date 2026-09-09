@@ -86,8 +86,6 @@ public:
 	
 	UFUNCTION()
 	virtual void OnLandedCallback(const FHitResult& Hit);
-
-	virtual void DisplayDebugForGame(float DeltaTime, bool bPrintToScreen = true, bool bPrintToLog = false);
 	//~ End Virtual Functions Declared In This Class
 
 	FVector GetCurrentVelocity() const { return Velocity; }
@@ -244,20 +242,29 @@ private:
 	// Recent 2D speed samples used by the legacy speed history graph
 	TArray<float> DebugSpeedHistory;
 
+	// High-water Y scale for the speed graph. Sprint often mutates MaxWalkSpeed,
+	// so a per-frame max of the current caps would still jump.
+	mutable float DebugGraphYMax = 0.f;
+
 	// Previous capsule location used to compute this frame's movement delta
 	FVector DebugCacheLastLocation = FVector::ZeroVector;
 	bool bHasDebugCacheLastLocation = false;
 
-	void DrawLegacyMovementDebug(float DeltaTime, bool bPrintToScreen, bool bPrintToLog);
-	void CollectMovementDebugHistory();
-	void DrawMovementSummaryText(bool bPrintToScreen, bool bPrintToLog) const;
-	void DrawMovementRotationRing(const FDebugDrawer& Drawer, const FRotator& ViewRotation, float DeltaTime) const;
-	void DrawMovementStatePanel(const FDebugDrawer& Drawer, const FRotator& ViewRotation) const;
-	void DrawMovementBars(const FDebugDrawer& Drawer, const FRotator& ViewRotation) const;
-	void DrawMovementHistoryTrail(const FDebugDrawer& Drawer) const;
-	void DrawMovementSpeedGraph(const FDebugDrawer& Drawer, const FRotator& ViewRotation) const;
+	// Ge.Move.Debug dispatcher: Style 0 = legacy ring/panel, Style 1 = shape overlay
+	void DrawMovementDebug(float DeltaTime);
+	void DrawMovementDebugLegacy(float DeltaTime, bool bPrintToScreen, bool bPrintToLog);
+	void DrawMovementDebugShape(float DeltaTime);
 
-	void DrawMovementDataShapeDebug(float DeltaTime);
+	// Ge.Move.Debug.DynCapsule overlay; laid out left of the shape panel when both are on
+	void DrawDynamicCapsuleDebug();
+
+	void CollectMovementDebugHistory();
+	void DrawMovementDebugSummary(bool bPrintToScreen, bool bPrintToLog) const;
+	void DrawMovementDebugRotationRing(const FDebugDrawer& Drawer, const FRotator& ViewRotation, float DeltaTime) const;
+	void DrawMovementDebugStatePanel(const FDebugDrawer& Drawer, const FRotator& ViewRotation) const;
+	void DrawMovementDebugBars(const FDebugDrawer& Drawer, const FRotator& ViewRotation) const;
+	void DrawMovementDebugTrail(const FDebugDrawer& Drawer) const;
+	void DrawMovementDebugGraph(const FDebugDrawer& Drawer, const FRotator& ViewRotation) const;
 #endif
 
 #pragma endregion
