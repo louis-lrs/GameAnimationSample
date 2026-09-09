@@ -3,10 +3,15 @@
 */
 
 #include "ENConnectionDrawingPolicy.h"
+#include "AnimGraphNode_Base.h"
+#include "Animation/AnimBlueprint.h"
+#include "Animation/AnimBlueprintGeneratedClass.h"
+#include "AnimationGraphSchema.h"
 #include "BlueprintEditorSettings.h"
 #include "ENPathDrawer.h"
 #include "SGraphPanel.h"
 #include "Framework/Application/SlateApplication.h"
+#include "Kismet2/BlueprintEditorUtils.h"
 #include "MaterialGraph/MaterialGraphSchema.h"
 #include "Policies/ENBehaviorTreeConnectionDrawingPolicy.h"
 
@@ -87,6 +92,100 @@ FConnectionDrawingPolicy* FENConnectionDrawingPolicyFactory::CreateConnectionPol
 	}
 
 	return nullptr;
+}
+
+bool FENConnectionDrawingPolicy::IsAnimationGraph() const
+{
+	// Covers AnimGraph, state graphs and custom transition graphs (all derive from UAnimationGraphSchema).
+	// Transition rule graphs derive from UEdGraphSchema_K2 and keep the Kismet roadmap.
+	const UEdGraphSchema* Schema = GraphObj ? GraphObj->GetSchema() : nullptr;
+	return Schema && Schema->IsA<UAnimationGraphSchema>();
+}
+
+bool FENConnectionDrawingPolicy::TreatWireAsExecutionPin(UEdGraphPin* InputPin, UEdGraphPin* OutputPin) const
+{
+	if (IsAnimationGraph())
+	{
+		return InputPin && OutputPin && UAnimationGraphSchema::IsPosePin(OutputPin->PinType);
+	}
+
+	return FKismetConnectionDrawingPolicy::TreatWireAsExecutionPin(InputPin, OutputPin);
+}
+
+void FENConnectionDrawingPolicy::BuildExecutionRoadmap()
+{
+	if (!IsAnimationGraph())
+	{
+		FKismetConnectionDrawingPolicy::BuildExecutionRoadmap();
+		return;
+	}
+
+	// Mirror FAnimGraphConnectionDrawingPolicy: binary UE builds do not export that class.
+	UAnimBlueprint* TargetBP = Cast<UAnimBlueprint>(FBlueprintEditorUtils::FindBlueprintForGraph(GraphObj));
+	if (!TargetBP || !TargetBP->GetObjectBeingDebugged())
+	{
+		return;
+	}
+
+	UAnimBlueprintGeneratedClass* AnimBlueprintClass = Cast<UAnimBlueprintGeneratedClass>(TargetBP->GeneratedClass);
+	if (!AnimBlueprintClass)
+	{
+		return;
+	}
+
+	FAnimBlueprintDebugData& DebugInfo = AnimBlueprintClass->GetAnimBlueprintDebugData();
+	const int32 NumAnimNodeProperties = AnimBlueprintClass->GetAnimNodeProperties().Num();
+
+	for (const FAnimBlueprintDebugData::FNodeVisit& VisitRecord : DebugInfo.UpdatedNodesThisFrame)
+	{
+		if (VisitRecord.SourceID < 0 || VisitRecord.SourceID >= NumAnimNodeProperties ||
+			VisitRecord.TargetID < 0 || VisitRecord.TargetID >= NumAnimNodeProperties)
+		{
+			continue;
+		}
+
+		const int32 ReverseSourceID = NumAnimNodeProperties - 1 - VisitRecord.SourceID;
+		const int32 ReverseTargetID = NumAnimNodeProperties - 1 - VisitRecord.TargetID;
+		const UAnimGraphNode_Base* SourceNode = Cast<const UAnimGraphNode_Base>(DebugInfo.NodePropertyIndexToNodeMap.FindRef(ReverseSourceID));
+		const UAnimGraphNode_Base* TargetNode = Cast<const UAnimGraphNode_Base>(DebugInfo.NodePropertyIndexToNodeMap.FindRef(ReverseTargetID));
+		if (!SourceNode || !TargetNode)
+		{
+			continue;
+		}
+
+		UEdGraphPin* PoseNet = nullptr;
+		for (UEdGraphPin* Pin : TargetNode->Pins)
+		{
+			if (Pin && UAnimationGraphSchema::IsPosePin(Pin->PinType) && Pin->Direction == EGPD_Output)
+			{
+				PoseNet = Pin;
+				break;
+			}
+		}
+
+		if (PoseNet)
+		{
+			FExecPairingMap& Predecessors = PredecessorPins.FindOrAdd(const_cast<UAnimGraphNode_Base*>(SourceNode));
+			FTimePair& Timings = Predecessors.FindOrAdd(PoseNet);
+			Timings.PredExecTime = 0.0;
+			Timings.ThisExecTime = FMath::Clamp(VisitRecord.Weight, 0.f, 1.f);
+		}
+	}
+}
+
+void FENConnectionDrawingPolicy::DetermineStyleOfExecWire(float& Thickness, FLinearColor& WireColor, bool& bDrawBubbles, const FTimePair& Times)
+{
+	if (!IsAnimationGraph())
+	{
+		FKismetConnectionDrawingPolicy::DetermineStyleOfExecWire(Thickness, WireColor, bDrawBubbles, Times);
+		return;
+	}
+
+	// Anim graph stores blend weight in ThisExecTime (0-1), not a timestamp envelope.
+	const double BlendWeight = Times.ThisExecTime;
+	Thickness = FMath::Lerp<float>(SustainWireThickness, AttackWireThickness, BlendWeight);
+	WireColor = WireColor * static_cast<float>(BlendWeight * 0.5 + 0.5);
+	bDrawBubbles = true;
 }
 
 void FENConnectionDrawingPolicy::DrawConnection(int32 LayerId, const FVector2f& StartF, const FVector2f& EndF, const FConnectionParams& Params)

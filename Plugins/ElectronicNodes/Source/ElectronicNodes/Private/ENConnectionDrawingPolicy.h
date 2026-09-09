@@ -49,6 +49,8 @@ public:
 	}
 
 	virtual void DrawConnection(int32 LayerId, const FVector2f& Start, const FVector2f& End, const FConnectionParams& Params) override;
+	virtual void BuildExecutionRoadmap() override;
+	virtual void DetermineStyleOfExecWire(float& Thickness, FLinearColor& WireColor, bool& bDrawBubbles, const FTimePair& Times) override;
 
 	void ENComputeClosestPoint(const FVector2D& Start, const FVector2D& End);
 	void ENComputeClosestPointDefault(const FVector2D& Start, const FVector2D& StartTangent, const FVector2D& End, const FVector2D& EndTangent);
@@ -67,6 +69,9 @@ private:
 	TMap<FVector2D, int> PinsOffset;
 
 	bool IsTree = false;
+
+	bool IsAnimationGraph() const;
+	virtual bool TreatWireAsExecutionPin(UEdGraphPin* InputPin, UEdGraphPin* OutputPin) const override;
 
 	void ENCorrectZoomDisplacement(FVector2D& Start, FVector2D& End);
 	void ENProcessRibbon(int32 LayerId, FVector2D& Start, FVector2D& StartDirection, FVector2D& End, FVector2D& EndDirection, const FConnectionParams& Params);
