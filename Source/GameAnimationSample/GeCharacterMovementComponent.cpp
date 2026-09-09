@@ -97,11 +97,11 @@ namespace GeCharacterMovementCVars
 		     "  4 = TwoWallSlide (same as 3, enabled separately)"));
 
 	/**
-	 * ???????? ?? ?????????????????????
+	 * 模式能力查询函数 —— 扩展新模式时只需修改这里，调用处无需改动。
 	 *
-	 * SlideMode_SkipsFixup        : ???? NormalZ<0 fixup ?
-	 * SlideMode_UsesTwoWall       : ???? TwoWallSlide SlideDelta ??
-	 * SlideMode_PreservesHorizSpeed: ??? TwoWallSlide ???????
+	 * SlideMode_SkipsFixup        : 是否跳过 NormalZ<0 fixup 块
+	 * SlideMode_UsesTwoWall       : 是否启用 TwoWallSlide SlideDelta 修正
+	 * SlideMode_PreservesHorizSpeed: 是否在 TwoWallSlide 中保留水平速度
 	 */
 	static bool SlideMode_SkipsFixup(int32 Mode)
 	{
@@ -379,7 +379,7 @@ void UGeCharacterMovementComponent::ServerMove_PerformMovement(const FCharacterN
 
 void UGeCharacterMovementComponent::OnApplyJumpTimeData(const FGeCharacterNetworkMoveData& GeMoveData)
 {
-	// ? FFloat16 ???????
+	// 从 FFloat16 直接获取浮点值
 	const float ReceivedActualJumpApexTime = GeMoveData.SavedActualJumpApexTime.GetFloat();
 	const float OldActualJumpApexTime = ActualJumpApexTime;
 	if (ReceivedActualJumpApexTime > UE_KINDA_SMALL_NUMBER)
@@ -1874,7 +1874,7 @@ void UGeCharacterMovementComponent::CollectMovementDebugHistory()
 {
 	// Distance-gated sampling: standing still must NOT push new samples, otherwise the
 	// ring buffer evicts the existing path and the trail appears to vanish.
-	// Note: TAutoConsoleVariable defaults do not refresh under Live Coding ? set the CVar
+	// Note: TAutoConsoleVariable defaults do not refresh under Live Coding -- set the CVar
 	// explicitly (or restart the editor) after changing the registered default.
 	const int32 TrailCount = CVarGeMove_DebugHistory.GetValueOnGameThread();
 	if (TrailCount > 0)
@@ -1999,7 +1999,7 @@ void UGeCharacterMovementComponent::DrawMovementDebugRotationRing(const FDebugDr
 				CapsuleStyle, true);
 		}
 
-		// Hemispheres: two orthogonal 180? arcs at each end (XZ / YZ of the capsule)
+		// Hemispheres: two orthogonal 180-degree arcs at each end (XZ / YZ of the capsule)
 		const FRotator TopXZ = FRotationMatrix::MakeFromXY(CapsuleForward, CapsuleUp).Rotator();
 		const FRotator TopYZ = FRotationMatrix::MakeFromXY(CapsuleRight, CapsuleUp).Rotator();
 		const FRotator BottomXZ = FRotationMatrix::MakeFromXY(CapsuleForward, -CapsuleUp).Rotator();
@@ -2889,7 +2889,7 @@ float UGeCharacterMovementComponent::SlideAlongSurface(const FVector& Delta, flo
 			const FString NewWallActor = GetNameSafe(Hit.GetActor());
 			const float CosAngle = FMath::Clamp(OldHitNormal | NewHitNormal, -1.f, 1.f);
 			const float AngleDeg = FMath::RadiansToDegrees(FMath::Acos(CosAngle));
-			UE_LOG_ENHANCED(LogGeCharacterMovement, Verbose, this, TEXT("%hs Mode=%d, Angle=%.2f?, OldHitNormal=%s, NewHitNormal=%s, SlideDelta=%s, bNearlyZero=%d, bForward=%d"),
+			UE_LOG_ENHANCED(LogGeCharacterMovement, Verbose, this, TEXT("%hs Mode=%d, Angle=%.2f°, OldHitNormal=%s, NewHitNormal=%s, SlideDelta=%s, bNearlyZero=%d, bForward=%d"),
 					__FUNCTION__, SlideFixMode, AngleDeg, *OldHitNormal.ToCompactString(), *NewHitNormal.ToCompactString(), *SlideDelta.ToCompactString(), bNearlyZero, bForward);
 			
 			if (GeCharacterMovementCVars::SlideMode_UsesTwoWall(SlideFixMode))
@@ -2911,7 +2911,7 @@ float UGeCharacterMovementComponent::SlideAlongSurface(const FVector& Delta, flo
 					{
 						// Expected direction: Delta projected onto the floor plane.
 						FVector ExpectDir = FVector::VectorPlaneProject(Delta, OldHitNormal);
-						// Pick whichever ?89? rotation around the wall normal aligns better
+						// Pick whichever ±89° rotation around the wall normal aligns better
 						// with the expected direction.
 						FVector LeftDir  = Delta.RotateAngleAxis(-89.f, NewHitNormal);
 						FVector RightDir = Delta.RotateAngleAxis( 89.f, NewHitNormal);
